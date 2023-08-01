@@ -1249,6 +1249,12 @@ void Testbed::imgui() {
 			accum_reset |= ImGui::Combo("Color space", (int*)&m_color_space, ColorSpaceStr);
 			accum_reset |= ImGui::Checkbox("Snap to pixel centers", &m_snap_to_pixel_centers);
 
+
+			ImGui::Checkbox("Terminate depth at density threshold", &m_dex_nerf);
+			if (m_dex_nerf) {
+				ImGui::SliderFloat("Sigma threshold", &m_sigma_thrsh, 0.0f, 100.0f);
+			}
+
 			ImGui::TreePop();
 		}
 

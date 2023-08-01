@@ -187,6 +187,8 @@ public:
 			ERenderMode render_mode,
 			const mat4x3 &camera_matrix,
 			float depth_scale,
+			float m_sigma_thrsh,
+			bool m_dex_nerf,
 			int visualized_layer,
 			int visualized_dim,
 			ENerfActivation rgb_activation,
@@ -552,6 +554,8 @@ public:
 
 	// Rendering stuff
 	ivec2 m_window_res = ivec2(0);
+	bool m_dex_nerf=true;
+	float m_sigma_thrsh = 15.0f;
 	bool m_dynamic_res = true;
 	float m_dynamic_res_target_fps = 20.0f;
 	int m_fixed_res_factor = 8;

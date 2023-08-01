@@ -477,6 +477,8 @@ __global__ void composite_kernel_nerf(
 	mat4x3 camera_matrix,
 	vec2 focal_length,
 	float depth_scale,
+	float m_sigma_thrsh,
+	bool m_dex_nerf,
 	vec4* __restrict__ rgba,
 	float* __restrict__ depth,
 	NerfPayload* payloads,
@@ -520,7 +522,8 @@ __global__ void composite_kernel_nerf(
 
 		float T = 1.f - local_rgba.a;
 		float dt = unwarp_dt(input->dt);
-		float alpha = 1.f - __expf(-network_to_density(float(local_network_output[3]), density_activation) * dt);
+		float sigma = network_to_density(float(local_network_output[3]), density_activation);
+		float alpha = 1.f - __expf(-sigma * dt);
 		if (show_accel >= 0) {
 			alpha = 1.f;
 		}
@@ -638,6 +641,18 @@ __global__ void composite_kernel_nerf(
 			rgb = warped_pos;
 		} else if (render_mode == ERenderMode::Depth) {
 			rgb = vec3(dot(cam_fwd, pos - origin) * depth_scale);
+
+			if (m_dex_nerf) {
+				local_rgba.r = rgb.x;
+				local_rgba.g = rgb.y;
+				local_rgba.b = rgb.z;
+				local_rgba.w += weight;
+				if (sigma>m_sigma_thrsh) {
+					break;
+				} else {
+					continue;
+				}
+			}
 		} else if (render_mode == ERenderMode::AO) {
 			rgb = vec3(alpha);
 		}
@@ -1640,6 +1655,8 @@ uint32_t Testbed::NerfTracer::trace(
 	ERenderMode render_mode,
 	const mat4x3 &camera_matrix,
 	float depth_scale,
+	float m_sigma_thrsh,
+	bool m_dex_nerf,
 	int visualized_layer,
 	int visualized_dim,
 	ENerfActivation rgb_activation,
@@ -1729,6 +1746,8 @@ uint32_t Testbed::NerfTracer::trace(
 			camera_matrix,
 			focal_length,
 			depth_scale,
+			m_sigma_thrsh,
+			m_dex_nerf,
 			rays_current.rgba,
 			rays_current.depth,
 			rays_current.payload,
@@ -1903,6 +1922,8 @@ void Testbed::render_nerf(
 			render_mode,
 			camera_matrix1,
 			depth_scale,
+			m_sigma_thrsh,
+			m_dex_nerf,
 			m_visualized_layer,
 			visualized_dimension,
 			m_nerf.rgb_activation,
