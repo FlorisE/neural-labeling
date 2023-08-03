@@ -521,6 +521,7 @@ public:
 		GPUMemory<vec3> verts_gradient;
 		std::shared_ptr<TrainableBuffer<3, 1, float>> trainable_verts;
 		std::shared_ptr<Optimizer<float>> verts_optimizer;
+		int num_vertices;
 
 		void clear() {
 			indices={};
@@ -589,6 +590,12 @@ public:
 	EMeshRenderMode m_mesh_render_mode = EMeshRenderMode::VertexNormals;
 
 	uint32_t m_seed = 1337;
+
+	GLuint marker_program = 0;
+	GLuint marker_vs = 0;
+	GLuint marker_ps = 0;
+
+	float m_markers_render_alpha = 1.0;
 
 #ifdef NGP_GUI
 	GLFWwindow* m_glfw_window = nullptr;
@@ -774,6 +781,110 @@ public:
 		void set_rendering_extra_dims_from_training_view(int trainview);
 		void set_rendering_extra_dims(const std::vector<float>& vals);
 		std::vector<float> get_rendering_extra_dims_cpu() const;
+
+        struct Marker {
+			Marker() {};
+			Marker(const mat3& rot, const vec3& pos, const std::string& _fs_path) {
+				transform[0] = rot[0];
+				transform[1] = rot[1];
+				transform[2] = rot[2];
+				transform[3] = pos;
+				fs_path = _fs_path;
+			}
+
+            mat4x3 transform = mat4x3::identity();
+			vec3 instance_color = {1.f, 1.f, 1.f};
+			ngp::BoundingBox bounding_box = ngp::BoundingBox();
+			std::vector<vec3> mc_verts;
+			std::vector<vec3> mc_normals;
+			std::vector<vec3> mc_colors;
+			std::vector<uint32_t> mc_indices;
+			int mc_num_vertices = 0;
+            Mesh mesh;
+            std::string fs_path;
+            bool selected = false;
+
+			void update_bounding_box() {
+				if (mesh.verts.size() == 0)
+					return;
+
+				for (int i = 0; i < mesh.verts.size(); ++i)
+				{
+					const auto& vert = mesh.verts[i];
+					if (i == 0) {
+						bounding_box.min = vert;
+						bounding_box.max = vert;
+					} else {
+						if (vert[0] < bounding_box.min[0]) {
+							bounding_box.min[0] = vert[0];
+						}
+						if (vert[1] < bounding_box.min[1]) {
+							bounding_box.min[1] = vert[1];
+						}
+						if (vert[2] < bounding_box.min[2]) {
+							bounding_box.min[2] = vert[2];
+						}
+						if (vert[0] > bounding_box.max[0]) {
+							bounding_box.max[0] = vert[0];
+						}
+						if (vert[1] > bounding_box.max[1]) {
+							bounding_box.max[1] = vert[1];
+						}
+						if (vert[2] > bounding_box.max[2]) {
+							bounding_box.max[2] = vert[2];
+						}
+					}
+				}
+			}
+        };
+
+		struct MeshMarkers {
+			struct MarchingCubes {
+				EMeshRenderMode render_mode = EMeshRenderMode::VertexColors;
+				bool render_bounding_boxes = false;
+				float scale = 1.1f;
+				int optimization_steps = 1;
+				float max_distance_filter_threshold = 0.01f;
+				float thresh = 2.5f;
+				int res = 256;
+			} marching_cubes;
+        	std::vector<Marker> markers;
+			ECustomMeshRenderMode render_mode = ECustomMeshRenderMode::Shade;
+			bool render_bounding_boxes = false;
+			bool render_3d_bounding_boxes = false;
+        	ImGuizmo::OPERATION guizmo_op = ImGuizmo::TRANSLATE;
+			float mean_marker_depth = 0.0f;
+			float mean_nerf_depth = 0.0f;
+			std::vector<fs::path> available_meshes;
+			std::string available_meshes_str = "None";
+			int selected_mesh = 0;
+			bool render_nerf_overlay = false;
+			bool optimize_alignment = false;
+		} mesh_markers;
+
+		struct BoundingBoxMarkers {
+			struct MarchingCubes {
+				EMeshRenderMode render_mode = EMeshRenderMode::VertexColors;
+				float thresh = 2.5f;
+				int res = 256;
+				bool run_automatically = true;
+			} marching_cubes;
+			std::vector<Marker> markers;
+			EBoundingBoxRenderMode render_mode = EBoundingBoxRenderMode::All;
+        	ImGuizmo::OPERATION guizmo_op = ImGuizmo::TRANSLATE;
+		} bounding_box_markers;
+
+		std::string meshes_root_dir = "meshes";
+
+		struct Measure {
+			bool render = true;
+			vec3 start = vec3::zero();
+			vec3 end = vec3::zero();
+			bool record_start = false;
+			bool record_end = false;
+			vec3 color = vec3::ones();
+			float thickness = 1.0f;
+		} measure;
 	} m_nerf;
 
 	struct Sdf {
@@ -955,6 +1066,10 @@ public:
 		char cam_path_path[MAX_PATH_LEN] = "cam.json";
 		char extrinsics_path[MAX_PATH_LEN] = "extrinsics.json";
 		char mesh_path[MAX_PATH_LEN] = "base.obj";
+		char insert_bounding_box_path[MAX_PATH_LEN] = "";
+		char meshes_root_dir[MAX_PATH_LEN] = "meshes";
+        char insert_meshes_path[MAX_PATH_LEN] = "meshes.json";
+        char insert_bounding_boxes_path[MAX_PATH_LEN] = "bounding_boxes.json";
 		char snapshot_path[MAX_PATH_LEN] = "base.ingp";
 		char video_path[MAX_PATH_LEN] = "video.mp4";
 	} m_imgui;
@@ -1213,6 +1328,22 @@ public:
 	} m_distortion;
 
 	std::shared_ptr<NerfNetwork<network_precision_t>> m_nerf_network;
+
+	void render_3d_bounding_boxes(ImDrawList* list, const mat4& world2proj, const Testbed::Nerf::Marker& marker);
+	void single_marker_marching_cubes(Testbed::Nerf::Marker& marker, float scale, float thresh, uint32_t res);
+	void marker_density_and_marching_cubes(const Testbed::Nerf::Marker& marker, std::vector<vec3>& out_verts, std::vector<vec3>& out_colors, std::vector<uint32_t>& out_indices, std::vector<vec3>& out_normals, ivec3& res3d, int& n_vertices, float scale, float thresh, uint32_t res);
+	void render_mc_bounding_boxes(ImDrawList* list, const mat4 world2proj, const Testbed::Nerf::Marker& marker);
+	void render_mesh_extraction_bounding_boxes(ImDrawList* list, const mat4& world2proj, const Testbed::Nerf::Marker& marker);
+	void add_bb_marker(const fs::path& data_path, const mat4& transform = mat4::identity(), const vec3& a = vec3(-0.05f, -0.05f, -0.05f), const vec3& b = vec3(0.05f, 0.05f, 0.05f));
+	void bounding_box_marching_cubes();
+	void shrink_bounding_boxes(cudaStream_t stream);
+	void save_bounding_boxes(const fs::path& data_path);
+	void save_markers(const fs::path& data_path);
+	void optimise_markers(uint32_t n_steps, float scale, float thresh, int res);
+	void add_marker(const fs::path& data_path);
+	void add_bounding_boxes(const fs::path& data_path);
+	void add_markers(const fs::path& data_path);
+	void marker_marching_cubes();
 };
 
 }

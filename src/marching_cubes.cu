@@ -771,7 +771,7 @@ void compute_mesh_opt_gradients(
 	);
 }
 
-void marching_cubes_gpu(cudaStream_t stream, BoundingBox render_aabb, mat3 render_aabb_to_local, ivec3 res_3d, float thresh, const GPUMemory<float>& density, GPUMemory<vec3>& verts_out, GPUMemory<uint32_t>& indices_out) {
+void marching_cubes_gpu(cudaStream_t stream, BoundingBox render_aabb, mat3 render_aabb_to_local, ivec3 res_3d, float thresh, const GPUMemory<float>& density, GPUMemory<vec3>& verts_out, GPUMemory<uint32_t>& indices_out, int& n_vertices) {
 	GPUMemory<uint32_t> counters;
 
 	counters.enlarge(4);
@@ -792,6 +792,7 @@ void marching_cubes_gpu(cudaStream_t stream, BoundingBox render_aabb, mat3 rende
 	counters.copy_to_host(cpucounters);
 	tlog::info() << "#vertices=" << cpucounters[0] << " #triangles=" << (cpucounters[1]/3);
 
+	n_vertices = cpucounters[0];
 	uint32_t n_verts = next_multiple(cpucounters[0], BATCH_SIZE_GRANULARITY); // round for later nn stuff
 	verts_out.resize(n_verts);
 	verts_out.memset(0);
@@ -802,33 +803,24 @@ void marching_cubes_gpu(cudaStream_t stream, BoundingBox render_aabb, mat3 rende
 	gen_faces<<<blocks, threads, 0>>>(res_3d, density.data(), vertex_grid, indices_out.data(), thresh, counters.data()+2);
 }
 
-void save_mesh(
-	GPUMemory<vec3>& verts,
-	GPUMemory<vec3>& normals,
-	GPUMemory<vec3>& colors,
-	GPUMemory<uint32_t>& indices,
+void save_mesh_cpu(
+	std::vector<vec3>& verts,
+	std::vector<vec3>& normals,
+	std::vector<vec3>& colors,
+	const std::vector<uint32_t>& indices,
 	const fs::path& path,
 	bool unwrap_it,
 	float nerf_scale,
 	vec3 nerf_offset
 ) {
-	std::vector<vec3> cpuverts; cpuverts.resize(verts.size());
-	std::vector<vec3> cpunormals; cpunormals.resize(normals.size());
-	std::vector<vec3> cpucolors; cpucolors.resize(colors.size());
-	std::vector<uint32_t> cpuindices; cpuindices.resize(indices.size());
-	verts.copy_to_host(cpuverts);
-	normals.copy_to_host(cpunormals);
-	colors.copy_to_host(cpucolors);
-	indices.copy_to_host(cpuindices);
-
 	// Replace invalid values with reasonable defaults
-	for (size_t i = 0; i < cpuverts.size(); ++i) {
-		if (!all(isfinite(cpuverts[i]))) cpuverts[i] = vec3(0.0f);
-		if (!all(isfinite(cpunormals[i]))) cpunormals[i] = vec3{0.0f, 1.0f, 0.0f};
-		if (!all(isfinite(cpucolors[i]))) cpucolors[i] = vec3(0.0f);
+	for (size_t i = 0; i < verts.size(); ++i) {
+		if (!all(isfinite(verts[i]))) verts[i] = vec3(0.0f);
+		if (!all(isfinite(normals[i]))) normals[i] = vec3{0.0f, 1.0f, 0.0f};
+		if (!all(isfinite(colors[i]))) colors[i] = vec3(0.0f);
 	}
 
-	uint32_t numquads = ((cpuindices.size()/3)+1)/2;
+	uint32_t numquads = ((indices.size()/3)+1)/2;
 	uint32_t numquadsx = uint32_t(sqrtf(numquads)+4) & (~3);
 	uint32_t numquadsy = (numquads+numquadsx-1)/numquadsx;
 	uint32_t quadresy = 8;
@@ -886,20 +878,20 @@ void save_mesh(
 			"element face %u\n"
 			"property list uchar int vertex_index\n"
 			"end_header\n"
-			, (unsigned int)cpuverts.size()
-			, (unsigned int)cpuindices.size()/3
+			, (unsigned int)verts.size()
+			, (unsigned int)indices.size()/3
 		);
 
-		for (size_t i=0;i<cpuverts.size();++i) {
-			vec3 p = (cpuverts[i]-nerf_offset)/nerf_scale;
-			vec3 c = cpucolors[i];
-			vec3 n = normalize(cpunormals[i]);
+		for (size_t i=0;i<verts.size();++i) {
+			vec3 p = (verts[i]-nerf_offset)/nerf_scale;
+			vec3 c = colors[i];
+			vec3 n = normalize(normals[i]);
 			unsigned char c8[3] = {(unsigned char)clamp(c.x*255.f,0.f,255.f),(unsigned char)clamp(c.y*255.f,0.f,255.f),(unsigned char)clamp(c.z*255.f,0.f,255.f)};
 			fprintf(f, "%0.5f %0.5f %0.5f %0.3f %0.3f %0.3f %d %d %d\n", p.x, p.y, p.z, n.x, n.y, n.z, c8[0], c8[1], c8[2]);
 		}
 
-		for (size_t i = 0; i < cpuindices.size(); i += 3) {
-			fprintf(f, "3 %d %d %d\n", cpuindices[i+2], cpuindices[i+1], cpuindices[i+0]);
+		for (size_t i = 0; i < indices.size(); i += 3) {
+			fprintf(f, "3 %d %d %d\n", indices[i+2], indices[i+1], indices[i+0]);
 		}
 	} else {
 		// obj file
@@ -907,19 +899,19 @@ void save_mesh(
 			fprintf(f, "mtllib nerf.mtl\n");
 		}
 
-		for (size_t i = 0; i < cpuverts.size(); ++i) {
-			vec3 p = (cpuverts[i]-nerf_offset)/nerf_scale;
-			vec3 c = cpucolors[i];
+		for (size_t i = 0; i < verts.size(); ++i) {
+			vec3 p = (verts[i]-nerf_offset)/nerf_scale;
+			vec3 c = colors[i];
 			fprintf(f, "v %0.5f %0.5f %0.5f %0.3f %0.3f %0.3f\n", p.x, p.y, p.z, clamp(c.x, 0.f, 1.f), clamp(c.y, 0.f, 1.f), clamp(c.z, 0.f, 1.f));
 		}
 
-		for (auto &v: cpunormals) {
+		for (auto &v: normals) {
 			auto n = normalize(v);
 			fprintf(f, "vn %0.5f %0.5f %0.5f\n", n.x, n.y, n.z);
 		}
 
 		if (unwrap_it) {
-			for (size_t i = 0; i < cpuindices.size(); i++) {
+			for (size_t i = 0; i < indices.size(); i++) {
 				uint32_t q = (uint32_t)(i/6);
 				uint32_t x = (q%numquadsx)*quadresx;
 				uint32_t y = (q/numquadsx)*quadresy;
@@ -936,22 +928,44 @@ void save_mesh(
 			}
 
 			fprintf(f, "g default\nusemtl nerf\ns 1\n");
-			for (size_t i = 0; i < cpuindices.size(); i += 3) {
+			for (size_t i = 0; i < indices.size(); i += 3) {
 				fprintf(f,"f %u/%u/%u %u/%u/%u %u/%u/%u\n",
-					cpuindices[i+2]+1,(uint32_t)i+3,  cpuindices[i+2]+1,
-					cpuindices[i+1]+1,(uint32_t)i+2,cpuindices[i+1]+1,
-					cpuindices[i+0]+1,(uint32_t)i+1,cpuindices[i+0]+1
+					indices[i+2]+1,(uint32_t)i+3,  indices[i+2]+1,
+					indices[i+1]+1,(uint32_t)i+2,indices[i+1]+1,
+					indices[i+0]+1,(uint32_t)i+1,indices[i+0]+1
 				);
 			}
 		} else {
-			for (size_t i = 0; i < cpuindices.size(); i += 3) {
+			for (size_t i = 0; i < indices.size(); i += 3) {
 				fprintf(f, "f %u//%u %u//%u %u//%u\n",
-					cpuindices[i+2]+1, cpuindices[i+2]+1, cpuindices[i+1]+1, cpuindices[i+1]+1, cpuindices[i+0]+1, cpuindices[i+0]+1
+					indices[i+2]+1, indices[i+2]+1, indices[i+1]+1, indices[i+1]+1, indices[i+0]+1, indices[i+0]+1
 				);
 			}
 		}
 	}
 	fclose(f);
+}
+
+void save_mesh(
+	GPUMemory<vec3>& verts,
+	GPUMemory<vec3>& normals,
+	GPUMemory<vec3>& colors,
+	GPUMemory<uint32_t>& indices,
+	const fs::path& path,
+	bool unwrap_it,
+	float nerf_scale,
+	vec3 nerf_offset
+) {
+	std::vector<vec3> cpuverts; cpuverts.resize(verts.size());
+	std::vector<vec3> cpunormals; cpunormals.resize(normals.size());
+	std::vector<vec3> cpucolors; cpucolors.resize(colors.size());
+	std::vector<uint32_t> cpuindices; cpuindices.resize(indices.size());
+	verts.copy_to_host(cpuverts);
+	normals.copy_to_host(cpunormals);
+	colors.copy_to_host(cpucolors);
+	indices.copy_to_host(cpuindices);
+
+	save_mesh_cpu(cpuverts, cpunormals, cpucolors, cpuindices, path, unwrap_it, nerf_scale, nerf_offset);
 }
 
 void save_density_grid_to_png(const GPUMemory<float>& density, const fs::path& path, ivec3 res3d, float thresh, bool swap_y_z, float density_range) {

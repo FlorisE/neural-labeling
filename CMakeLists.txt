@@ -380,3 +380,5 @@ if (Python_FOUND)
 	target_compile_definitions(pyngp PUBLIC -DNGP_PYTHON)
 	pybind11_extension(pyngp)
 endif()
+
+add_compile_definitions(ANNOYLIB_MULTITHREADED_BUILD)

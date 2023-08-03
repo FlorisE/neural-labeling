@@ -24,5 +24,6 @@
 namespace ngp {
 
 std::vector<vec3> load_obj(const fs::path& path);
+Mesh load_obj_complete(const fs::path& path);
 
 }

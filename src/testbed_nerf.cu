@@ -36,6 +36,11 @@
 #include <filesystem/directory.h>
 #include <filesystem/path.h>
 
+#include <annoy/src/annoylib.h>
+#include <annoy/src/kissrandom.h>
+
+#include "neural-graphics-primitives/tinyobj_loader_wrapper.h"
+
 
 #ifdef copysign
 #undef copysign
@@ -2280,6 +2285,101 @@ void Testbed::load_nerf(const fs::path& data_path) {
 	}
 
 	load_nerf_post();
+}__global__ void shrink_bounding_boxes_gpu(const uint32_t n_elements, const vec3* vertices_in, vec3* vertices_out, mat3 rotation) {
+	const uint32_t i = threadIdx.x + blockIdx.x * blockDim.x;
+	if (i >= n_elements) return;
+
+	vertices_out[i] = rotation * vertices_in[i];
+}
+
+void Testbed::shrink_bounding_boxes(cudaStream_t stream) {
+	for (auto& marker : m_nerf.bounding_box_markers.markers) {
+		float minX, minY, minZ = 0;
+		float maxX, maxY, maxZ = 0;
+
+		if (marker.mc_verts.size() > 0) {
+			const vec3 vert = transpose(mat3(marker.transform)) * (marker.mc_verts[0] - vec3(marker.transform[3]));
+			minX = vert.x;
+			minY = vert.y;
+			minZ = vert.z;
+			maxX = vert.x;
+			maxY = vert.y;
+			maxZ = vert.z;
+		}
+
+		for (unsigned int i = 1; i < marker.mc_num_vertices; ++i) {
+			vec3 vert_trans = (marker.mc_verts[i] - vec3(marker.transform[3]));
+			vec3 vert = transpose(mat3(marker.transform)) * vert_trans;
+			if (vert.x < minX) minX = vert.x;
+			if (vert.y < minY) minY = vert.y;
+			if (vert.z < minZ) minZ = vert.z;
+			if (vert.x > maxX) maxX = vert.x;
+			if (vert.y > maxY) maxY = vert.y;
+			if (vert.z > maxZ) maxZ = vert.z;
+		}
+
+		marker.bounding_box.min = vec3(minX, minY, minZ);
+		marker.bounding_box.max = vec3(maxX, maxY, maxZ);
+	}
+}
+
+void Testbed::save_bounding_boxes(const fs::path& data_path) {
+	if (data_path.empty()) {
+		throw std::runtime_error{"Cannot save NeRF data to an empty path."};
+	}
+	nlohmann::json j = {
+		{"bounding_boxes", nlohmann::json::array()},
+	};
+
+	for (auto& marker : m_nerf.bounding_box_markers.markers) {
+		nlohmann::json marker_json = {};
+		marker_json["file_path"] = marker.fs_path;
+		marker_json["instance_color"] = marker.instance_color;
+		std::vector<nlohmann::json> transform_rows;
+		for (int i = 0; i < 3; ++i) {
+			nlohmann::json col = nlohmann::json::array();
+			for (int j = 0; j < 4; ++j) {
+				col.push_back(marker.transform[j][i]);
+			}
+			transform_rows.push_back(col);
+		}
+		marker_json["transform_matrix"] = transform_rows;
+		marker_json["min"] = marker.bounding_box.min;
+		marker_json["max"] = marker.bounding_box.max;
+		j["bounding_boxes"].push_back(marker_json);
+	}
+
+	std::ofstream f(native_string(data_path));
+	f << j;
+}
+
+void Testbed::save_markers(const fs::path& data_path) {
+	if (data_path.empty()) {
+		throw std::runtime_error{"Cannot save NeRF data to an empty path."};
+	}
+	nlohmann::json j = {
+		{"markers", nlohmann::json::array()},
+	};
+
+	for (auto& marker : m_nerf.mesh_markers.markers) {
+		nlohmann::json marker_json = {};
+		marker_json["file_path"] = marker.fs_path;
+		//marker_json["selected"] = marker.selected;
+		marker_json["instance_color"] = marker.instance_color;
+		std::vector<nlohmann::json> rows;
+		for (int i = 0; i < 3; ++i) {
+			nlohmann::json col = nlohmann::json::array();
+			for (int j = 0; j < 4; ++j) {
+				col.push_back(marker.transform[j][i]);
+			}
+			rows.push_back(col);
+		}
+		marker_json["transform_matrix"] = rows;
+		j["markers"].push_back(marker_json);
+	}
+
+	std::ofstream f(native_string(data_path));
+	f << j;
 }
 
 void Testbed::update_density_grid_nerf(float decay, uint32_t n_uniform_density_grid_samples, uint32_t n_nonuniform_density_grid_samples, cudaStream_t stream) {
@@ -3011,6 +3111,332 @@ void Testbed::optimise_mesh_step(uint32_t n_steps) {
 	}
 }
 
+void Testbed::single_marker_marching_cubes(Nerf::Marker& marker, float scale, float thresh, uint32_t res) {
+	ivec3 res3d;
+	marker_density_and_marching_cubes(marker, marker.mc_verts, marker.mc_colors, marker.mc_indices, marker.mc_normals, res3d, marker.mc_num_vertices, scale, thresh, res);
+}
+
+void Testbed::bounding_box_marching_cubes() {
+	for (auto& marker : m_nerf.bounding_box_markers.markers) {
+		single_marker_marching_cubes(marker, 1.0f, m_nerf.bounding_box_markers.marching_cubes.thresh, m_nerf.bounding_box_markers.marching_cubes.res);
+	}
+}
+
+void Testbed::marker_marching_cubes() {
+	for (auto& marker : m_nerf.mesh_markers.markers) {
+		single_marker_marching_cubes(marker, m_nerf.mesh_markers.marching_cubes.scale, m_nerf.mesh_markers.marching_cubes.thresh, m_nerf.mesh_markers.marching_cubes.res);
+	}
+}
+
+Annoy::AnnoyIndex<int, float, Annoy::Euclidean, Annoy::Kiss32Random, Annoy::AnnoyIndexMultiThreadedBuildPolicy> build_index(const std::vector<vec3>& verts) {
+    tlog::info() << "Building NN index";
+    Annoy::AnnoyIndex<int, float, Annoy::Euclidean, Annoy::Kiss32Random, Annoy::AnnoyIndexMultiThreadedBuildPolicy> annoy_index(3);
+    
+    for (int i = 0; i < verts.size(); ++i) {
+        annoy_index.add_item(i, verts[i].data());
+    }
+
+    annoy_index.build(10);
+
+	return annoy_index;
+}
+
+// Annoy::AnnoyIndex<int, float, Annoy::Euclidean, Annoy::Kiss32Random, Annoy::AnnoyIndexMultiThreadedBuildPolicy> build_index_with_colors(const std::vector<vec3>& verts, const std::vector<vec3>& colors) {
+//     tlog::info() << "Building NN index";
+//     Annoy::AnnoyIndex<int, float, Annoy::Euclidean, Annoy::Kiss32Random, Annoy::AnnoyIndexMultiThreadedBuildPolicy> annoy_index(6);
+    
+//     for (int i = 0; i < colored_verts.size(); ++i) {
+//         annoy_index.add_item(i, colored_verts[i].data());
+//     }
+
+//     annoy_index.build(10);
+
+// 	return annoy_index;
+// }
+
+void update_marker_transform(Testbed::Nerf::Marker& marker, const std::vector<vec3>& nearest_points, const std::vector<vec3>& mesh_points_matrix, int n_points) {
+	// vec3 target_mean_translation = nearest_points.colwise().mean();
+	// Eigen::MatrixXf target_centered_points(n_points, 3);
+	// target_centered_points = nearest_points.rowwise() - target_mean_translation.transpose();
+
+	// vec3 source_mean_translation = mesh_points_matrix.colwise().mean();
+	// Eigen::MatrixXf source_centered_points(n_points, 3);
+	// source_centered_points = mesh_points_matrix.rowwise() - source_mean_translation.transpose();
+
+	// vec3 mean_translation = target_mean_translation - source_mean_translation;
+
+	// mat3 moments = target_centered_points.transpose() * source_centered_points;
+
+	// JacobiSVD<MatrixXf> svd(moments, ComputeFullU | ComputeFullV);
+	// mat3 R = svd.matrixV() * svd.matrixU().transpose();
+	// if (R.determinant() < 0) {
+	// 	R *= -1.f;
+	// }
+	
+	// marker.transform.block(0, 3, 3, 1) += mean_translation;
+	// marker.transform.block(0, 0, 3, 3) *= R;
+}
+
+void optimize_icp_step(const std::vector<vec3>& target_verts, Testbed::Nerf::Marker& marker, Annoy::AnnoyIndex<int, float, Annoy::Euclidean, Annoy::Kiss32Random, Annoy::AnnoyIndexMultiThreadedBuildPolicy>& annoy_index, float distance_threshold, ivec3 res3d) {
+	// Eigen::MatrixXf nearest_points(marker.mesh.verts.size(), 3);
+	// Eigen::MatrixXf mesh_points_matrix(marker.mesh.verts.size(), 3);
+
+	// tcnn::GPUMemory<Vector3f> verts_in;
+	// verts_in.resize_and_copy_from_host(marker.mesh.verts);
+	// tcnn::GPUMemory<Vector3f> verts_out;
+	// verts_out.resize(marker.mesh.verts.size());
+	// const dim3 threads = { 4, 4, 4 };
+	// const dim3 blocks = { div_round_up((uint32_t)res3d.x(), threads.x), div_round_up((uint32_t)res3d.y(), threads.y), div_round_up((uint32_t)res3d.z(), threads.z) };
+	// transform_verts<<<blocks, threads, 0>>>(marker.mesh.verts.size(), marker.transform.block(0, 0, 3, 3), marker.transform.block(0, 3, 3, 1), verts_in.data(), verts_out.data());
+	// std::vector<Vector3f> verts_out_cpu;
+	// verts_out_cpu.resize(marker.mesh.verts.size());
+	// verts_out.copy_to_host(verts_out_cpu);
+
+	// std::vector<bool> used_point(marker.mesh.verts.size(), false);
+	// ThreadPool{}.parallel_for<int>(0, marker.mesh.verts.size(), [&](int j) {
+	// 	Vector3f& vert_rot_trans = verts_out_cpu[j];
+	// 	std::vector<int> id;
+	// 	id.reserve(1);
+	// 	std::vector<float> distance;
+	// 	distance.reserve(1);
+	// 	annoy_index.get_nns_by_vector(vert_rot_trans.data(), 1, 3, &id, &distance);
+	// 	nearest_points.row(j) = target_verts[id[0]];
+	// 	mesh_points_matrix.row(j) = vert_rot_trans;
+	// 	if (distance[0] < distance_threshold)
+	// 		used_point[j] = true;
+	// });
+
+	// auto n_used_points = std::count_if(used_point.begin(), used_point.end(), [&] (bool use_point) {return use_point;});
+	// Eigen::MatrixXf nearest_points_filtered(n_used_points, 3);
+	// Eigen::MatrixXf mesh_points_matrix_filtered(n_used_points, 3);
+	// int counter = 0;
+	// for (int j = 0; j < marker.mesh.verts.size(); ++j) {
+	// 	if (used_point[j]) {
+	// 		nearest_points_filtered.row(counter) = nearest_points.row(j);
+	// 		mesh_points_matrix_filtered.row(counter) = mesh_points_matrix.row(j);
+	// 		++counter;
+	// 	}
+	// }
+
+	// update_marker_transform(marker, nearest_points_filtered, mesh_points_matrix_filtered, counter);
+}
+
+void optimize_icp(const std::vector<vec3>& target_verts, uint32_t n_steps, Testbed::Nerf::Marker& marker, float distance_threshold, ivec3 res3d) {
+	auto annoy_index = build_index(target_verts);
+
+    tlog::info() << "Optimizing";
+    for (uint32_t i = 0; i < n_steps; ++i) {
+        optimize_icp_step(target_verts, marker, annoy_index, distance_threshold, res3d);
+    }
+}
+
+void Testbed::optimise_markers(uint32_t n_steps, float scale, float thresh, int res) {
+	tlog::info() << "Optimization step";
+
+	for (auto& marker : m_nerf.mesh_markers.markers) {
+		std::vector<vec3> verts;
+		std::vector<vec3> colors;
+		std::vector<uint32_t> indices;
+		std::vector<vec3> normals;
+		ivec3 res3d;
+		marker_density_and_marching_cubes(marker, verts, colors, indices, normals, res3d, marker.mc_num_vertices, scale, thresh, res);
+		optimize_icp(verts, n_steps, marker, m_nerf.mesh_markers.marching_cubes.max_distance_filter_threshold, res3d);
+	}
+}
+
+void Testbed::add_marker(const fs::path& data_path) {
+    tlog::info() << "Loading mesh from '" << data_path << "'";
+
+    Testbed::Nerf::Marker marker;
+    if (equals_case_insensitive(data_path.extension(), "obj")) {
+        marker.transform = mat4::identity();
+        marker.mesh = load_obj_complete(data_path);
+
+		vec3 mean_vertice = vec3::zero();
+		for (auto& vertice : marker.mesh.verts) {
+			mean_vertice += vertice / float(marker.mesh.verts.size());
+		}
+		for (auto& vertice : marker.mesh.verts) {
+			vertice -= mean_vertice;
+		}
+
+		marker.update_bounding_box();
+    } else {
+        throw std::runtime_error{"Marker data path must be a mesh in ascii .obj format."};
+    }
+    marker.fs_path = data_path.filename();
+
+    m_nerf.mesh_markers.markers.push_back(marker);
+}
+
+void Testbed::add_bounding_boxes(const fs::path& data_path) {
+	if (data_path.empty()) {
+		throw std::runtime_error{"Cannot load NeRF data from an empty path."};
+	}
+	tlog::info() << "Loading bounding boxes from '" << data_path << "'";
+
+	std::ifstream infile(native_string(data_path));
+	nlohmann::json bounding_boxes = nlohmann::json::parse(infile, nullptr, true, true);
+	if (bounding_boxes.contains("bounding_boxes")) {
+		for (auto&& bounding_box : bounding_boxes["bounding_boxes"]) {
+			nlohmann::json& jsonmatrix_start = bounding_box["transform_matrix"];
+			mat4 transform = mat4::identity();
+			for (int i = 0; i < 3; ++i) {
+				for (int j = 0; j < 4; ++j) {
+					float val = float(jsonmatrix_start[i][j]);
+					transform[j][i] = val;
+				}
+			}
+			nlohmann::json& jsonminvec_start = bounding_box["min"];
+			vec3 min;
+			for (int i = 0; i < 3; ++i) {
+				float val = float(jsonminvec_start[i]);
+				min[i] = val;
+			}
+			nlohmann::json& jsonmaxvec_start = bounding_box["max"];
+			vec3 max;
+			for (int i = 0; i < 3; ++i) {
+				float val = float(jsonmaxvec_start[i]);
+				max[i] = val;
+			}
+			add_bb_marker(fs::path(std::string(bounding_box["file_path"])), transform, min, max);
+			Testbed::Nerf::Marker& m = m_nerf.bounding_box_markers.markers.back();
+			for (int i = 0; i < 3; ++i) {
+				m.instance_color(i) = bounding_box["instance_color"][i];
+			}
+		}
+	}
+}
+
+void Testbed::add_markers(const fs::path& data_path) {
+	if (data_path.empty()) {
+		throw std::runtime_error{"Cannot load NeRF data from an empty path."};
+	}
+	tlog::info() << "Loading meshes from '" << data_path << "'";
+
+	std::ifstream infile(native_string(data_path));
+	nlohmann::json markers = nlohmann::json::parse(infile, nullptr, true, true);
+	if (markers.contains("markers")) {
+		for (auto&& marker : markers["markers"]) {
+			add_marker(fs::path(m_nerf.meshes_root_dir) / marker["file_path"]);
+			Testbed::Nerf::Marker& m = m_nerf.mesh_markers.markers.back();
+			nlohmann::json& jsonmatrix_start = marker["transform_matrix"];
+			for (int i = 0; i < 3; ++i) {
+				for (int j = 0; j < 4; ++j) {
+					float val = float(jsonmatrix_start[i][j]);
+					m.transform[j][i] = val;
+				}
+			}
+
+			m.update_bounding_box();
+			
+			m.selected = marker["selected"];
+			for (int i = 0; i < 3; ++i) {
+				m.instance_color(i) = marker["instance_color"][i];
+			}
+		}
+	}
+}
+
+void Testbed::add_bb_marker(const fs::path& data_path, const mat4& transform, const vec3& a, const vec3& b) {
+	Testbed::Nerf::Marker bb_marker;
+	bb_marker.transform = transform;
+	bb_marker.fs_path = data_path.str();
+	bb_marker.bounding_box.min = a;
+	bb_marker.bounding_box.max = b;
+	m_nerf.bounding_box_markers.markers.push_back(bb_marker);
+}
+
+void Testbed::marker_density_and_marching_cubes(const Testbed::Nerf::Marker& marker, std::vector<vec3>& out_verts, std::vector<vec3>& out_colors, std::vector<uint32_t>& out_indices, std::vector<vec3>& out_normals, ivec3& res3d, int& n_vertices, float scale, float thresh, uint32_t res) {
+    mat3 rotation = transpose(mat3(marker.transform));
+    vec3 a = (marker.bounding_box.min * scale) + transpose(mat3(marker.transform)) * marker.transform[3];
+    vec3 b = (marker.bounding_box.max * scale) + transpose(mat3(marker.transform)) * marker.transform[3];
+
+    BoundingBox aabb(a, b);
+
+    res3d = get_marching_cubes_res(res, BoundingBox(marker.bounding_box.min, marker.bounding_box.max));
+
+    tcnn::GPUMemory<float> density_gpu = get_density_on_grid(res3d, aabb, rotation);
+    tcnn::GPUMemory<vec3> verts_gpu;
+    tcnn::GPUMemory<uint32_t> indices_gpu;
+    marching_cubes_gpu(m_stream.get(), aabb, rotation, res3d, thresh, density_gpu, verts_gpu, indices_gpu, n_vertices);
+    out_verts.resize(verts_gpu.size());
+    verts_gpu.copy_to_host(out_verts);
+    out_indices.resize(indices_gpu.size());
+    indices_gpu.copy_to_host(out_indices);
+
+    // 1ring
+    tcnn::GPUMemory<vec4> output_pos;
+    tcnn::GPUMemory<vec3> normals_gpu;
+    compute_mesh_1ring(verts_gpu, indices_gpu, output_pos, normals_gpu);
+    
+	out_normals.resize(normals_gpu.size());
+    normals_gpu.copy_to_host(out_normals);
+
+	// colors
+    tcnn::GPUMemory<vec3> colors_gpu;
+    colors_gpu.resize(verts_gpu.size());
+    colors_gpu.memset(0);
+
+    const float* extra_dims_gpu = m_nerf.get_rendering_extra_dims(m_stream.get());
+
+    const uint32_t floats_per_coord = sizeof(NerfCoordinate) / sizeof(float) + (m_nerf_network)->n_extra_dims();
+    const uint32_t extra_stride = m_nerf_network->n_extra_dims() * sizeof(float);
+    GPUMemory<float> coords(verts_gpu.size() * floats_per_coord);
+    GPUMemory<float> mlp_out(verts_gpu.size() * 4);
+
+    GPUMatrix<float> positions_matrix((float*)coords.data(), floats_per_coord, verts_gpu.size());
+    GPUMatrix<float> color_matrix(mlp_out.data(), 4, verts_gpu.size());
+    linear_kernel(generate_nerf_network_inputs_from_positions, 0, m_stream.get(), verts_gpu.size(), m_aabb, verts_gpu.data(), PitchedPtr<NerfCoordinate>((NerfCoordinate*)coords.data(), 1, 0, extra_stride), extra_dims_gpu);
+    (m_network)->inference(m_stream.get(), positions_matrix, color_matrix);
+    linear_kernel(extract_srgb_with_activation, 0, m_stream.get(), verts_gpu.size() * 3, 3, mlp_out.data(), (float*)colors_gpu.data(), m_nerf.rgb_activation, m_nerf.training.linear_colors);
+
+    out_colors.resize(colors_gpu.size());
+    colors_gpu.copy_to_host(out_colors);
+}
+
+void Testbed::render_3d_bounding_boxes(ImDrawList* list, const mat4& world2proj, const Testbed::Nerf::Marker& marker) {
+	const mat4x3& world2model = marker.transform;
+	const vec3 a = marker.bounding_box.min + transpose(mat3(world2model)) * vec3(world2model[3]);
+	const vec3 b = marker.bounding_box.max + transpose(mat3(world2model)) * vec3(world2model[3]);
+	const ImColor color(marker.instance_color[0], marker.instance_color[1], marker.instance_color[2], 1.0f);
+	const mat3 R = mat3(world2model);
+
+	add_debug_line(list, world2proj, R * vec3{a.x, a.y, a.z}, R * vec3{a.x, a.y, b.z}, color); // Z
+	add_debug_line(list, world2proj, R * vec3{b.x, a.y, a.z}, R * vec3{b.x, a.y, b.z}, color);
+	add_debug_line(list, world2proj, R * vec3{a.x, b.y, a.z}, R * vec3{a.x, b.y, b.z}, color);
+	add_debug_line(list, world2proj, R * vec3{b.x, b.y, a.z}, R * vec3{b.x, b.y, b.z}, color);
+
+	add_debug_line(list, world2proj, R * vec3{a.x, a.y, a.z}, R * vec3{b.x, a.y, a.z}, color); // X
+	add_debug_line(list, world2proj, R * vec3{a.x, b.y, a.z}, R * vec3{b.x, b.y, a.z}, color);
+	add_debug_line(list, world2proj, R * vec3{a.x, a.y, b.z}, R * vec3{b.x, a.y, b.z}, color);
+	add_debug_line(list, world2proj, R * vec3{a.x, b.y, b.z}, R * vec3{b.x, b.y, b.z}, color);
+
+	add_debug_line(list, world2proj, R * vec3{a.x, a.y, a.z}, R * vec3{a.x, b.y, a.z}, color); // Y
+	add_debug_line(list, world2proj, R * vec3{b.x, a.y, a.z}, R * vec3{b.x, b.y, a.z}, color);
+	add_debug_line(list, world2proj, R * vec3{a.x, a.y, b.z}, R * vec3{a.x, b.y, b.z}, color);
+	add_debug_line(list, world2proj, R * vec3{b.x, a.y, b.z}, R * vec3{b.x, b.y, b.z}, color);
+}
+
+void Testbed::render_mesh_extraction_bounding_boxes(ImDrawList* list, const mat4& world2proj, const Testbed::Nerf::Marker& marker) {
+	const mat4x3& world2model = marker.transform;
+	const vec3 a = marker.bounding_box.min + transpose(mat3(world2model)) * vec3(world2model[3]);
+	const vec3 b = marker.bounding_box.max + transpose(mat3(world2model)) * vec3(world2model[3]);
+	mat3 R = transpose(mat3(world2model));
+
+	visualize_cube(list, world2proj, a, b, R);
+}
+
+void Testbed::render_mc_bounding_boxes(ImDrawList* list, const mat4 world2proj, const Testbed::Nerf::Marker& marker) {
+	const mat4x3& world2model = marker.transform;
+
+	vec3 a = (marker.bounding_box.min * m_nerf.mesh_markers.marching_cubes.scale) + transpose(mat3(world2model)) * vec3(world2model[3]);
+	vec3 b = (marker.bounding_box.max * m_nerf.mesh_markers.marching_cubes.scale) + transpose(mat3(world2model)) * vec3(world2model[3]);
+	mat3 R = transpose(mat3(world2model));
+
+	visualize_cube(list, world2proj, a, b, R);
+}
+
 void Testbed::compute_mesh_vertex_colors() {
 	uint32_t n_verts = (uint32_t)m_mesh.verts.size();
 	if (!n_verts) {
@@ -3140,7 +3566,7 @@ int Testbed::marching_cubes(ivec3 res3d, const BoundingBox& aabb, const mat3& re
 	}
 
 	GPUMemory<float> density = get_density_on_grid(res3d, aabb, render_aabb_to_local);
-	marching_cubes_gpu(m_stream.get(), aabb, render_aabb_to_local, res3d, thresh, density, m_mesh.verts, m_mesh.indices);
+	marching_cubes_gpu(m_stream.get(), aabb, render_aabb_to_local, res3d, thresh, density, m_mesh.verts, m_mesh.indices, m_mesh.num_vertices);
 
 	uint32_t n_verts = (uint32_t)m_mesh.verts.size();
 	m_mesh.verts_gradient.resize(n_verts);

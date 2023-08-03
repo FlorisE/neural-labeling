@@ -19,6 +19,7 @@
 #  define NOMINMAX
 #endif
 
+#include <vector>
 #include <tiny-cuda-nn/common.h>
 using namespace tcnn;
 
@@ -46,6 +47,12 @@ enum class EMeshRenderMode : int {
 	FaceIDs,
 };
 
+enum class EBoundingBoxRenderMode : int {
+	Off,
+	Selected,
+	All
+};
+
 enum class EGroundTruthRenderMode : int {
 	Shade,
 	Depth,
@@ -66,6 +73,17 @@ enum class ERenderMode : int {
 	EncodingVis, // EncodingVis exists outside of the standard render modes
 };
 static constexpr const char* RenderModeStr = "AO\0Shade\0Normals\0Positions\0Depth\0Distortion\0Cost\0Slice\0\0";
+
+enum class ECustomMeshRenderMode : int {
+	Shade,
+	Depth,
+	Normals,
+	BinarySegmentation,
+	InstanceSegmentation,
+	None
+};
+
+static constexpr const char* CustomMeshRenderModeStr = "Shade\0Depth\0Normals\0BinarySegmentation\0InstanceSegmentation\0None\0\0";
 
 enum class ERandomMode : int {
 	Random,
@@ -201,6 +219,15 @@ inline NGP_HOST_DEVICE bool supports_dlss(ELensMode mode) {
 struct Lens {
 	ELensMode mode = ELensMode::Perspective;
 	float params[7] = {};
+};
+
+
+
+struct Mesh {
+	std::vector<vec3> verts;
+	std::vector<vec3> vert_normals;
+	std::vector<vec3> vert_colors;
+	unsigned int texture_id;
 };
 
 inline NGP_HOST_DEVICE uint32_t binary_search(float val, const float* data, uint32_t length) {
