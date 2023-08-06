@@ -3330,7 +3330,6 @@ void Testbed::add_markers(const fs::path& data_path) {
 
 			m.update_bounding_box();
 			
-			m.selected = marker["selected"];
 			for (int i = 0; i < 3; ++i) {
 				m.instance_color(i) = marker["instance_color"][i];
 			}
