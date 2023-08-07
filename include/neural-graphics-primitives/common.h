@@ -227,6 +227,7 @@ struct Mesh {
 	std::vector<vec3> verts;
 	std::vector<vec3> vert_normals;
 	std::vector<vec3> vert_colors;
+	std::vector<uint32_t> indices;
 	unsigned int texture_id;
 };
 

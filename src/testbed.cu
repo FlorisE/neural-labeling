@@ -1532,6 +1532,27 @@ void Testbed::imgui() {
 							new_iterator->selected = true;
 						}
 					}
+					ImGui::SameLine();
+					if (ImGui::Button("Bounding box to marker")) {
+						Testbed::Nerf::Marker new_marker;
+						new_marker.transform[0] = bb_marker.transform[0];
+						new_marker.transform[1] = bb_marker.transform[1];
+						new_marker.transform[2] = bb_marker.transform[2];
+						new_marker.transform[3] = bb_marker.transform[3];
+						new_marker.bounding_box.min = iterator->bounding_box.min;
+						new_marker.bounding_box.max = iterator->bounding_box.max;
+						new_marker.instance_color = iterator->instance_color;
+						new_marker.mesh.vert_colors = iterator->mc_colors;
+						new_marker.mesh.vert_normals = iterator->mc_normals;
+						new_marker.mesh.indices = iterator->mc_indices;
+						new_marker.mesh.verts.reserve(iterator->mc_verts.size());
+						// verts for MC are in world coordinates, but mesh verts are in local coordinates
+						for (int i = 0; i < iterator->mc_verts.size(); ++i) {
+							new_marker.mesh.verts.push_back(iterator->mc_verts[i] - bb_marker.transform[3]);
+						}
+						new_marker.fs_path = iterator->fs_path;
+						m_nerf.mesh_markers.markers.push_back(new_marker);
+					}
 
 					if (ImGui::BeginPopupModal("Rename bounding box", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 						ImGui::InputText("Output name", m_imgui.insert_bounding_box_path, sizeof(m_imgui.insert_bounding_box_path));
@@ -1660,6 +1681,7 @@ void Testbed::imgui() {
 						shrink_bounding_boxes(m_stream.get());
 					}
 
+
 					if (ImGui::SliderFloat("MC density threshold",&m_nerf.bounding_box_markers.marching_cubes.thresh, -10.0f, 10.0f) && m_nerf.bounding_box_markers.marching_cubes.run_automatically) {
 						bounding_box_marching_cubes();
 					}
@@ -1755,6 +1777,22 @@ void Testbed::imgui() {
                 ImGui::SameLine();
                 if (ImGui::RadioButton("Scale", m_nerf.mesh_markers.guizmo_op == ImGuizmo::SCALE))
                     m_nerf.mesh_markers.guizmo_op = ImGuizmo::SCALE;
+                if (ImGui::Button("Duplicate Marker")) {
+					Testbed::Nerf::Marker new_marker;
+					new_marker.transform[0] = iterator->transform[0];
+					new_marker.transform[1] = iterator->transform[1];
+					new_marker.transform[2] = iterator->transform[2];
+					new_marker.transform[3] = iterator->transform[3];
+					new_marker.bounding_box.min = iterator->bounding_box.min;
+					new_marker.bounding_box.max = iterator->bounding_box.max;
+					new_marker.instance_color = iterator->instance_color;
+				    new_marker.mesh = iterator->mesh;
+				    new_marker.fs_path = iterator->fs_path;
+				    new_marker.selected = true;
+				    iterator->selected = false;
+                    m_nerf.mesh_markers.markers.push_back(new_marker);
+                }
+				ImGui::SameLine();
                 if (imgui_colored_button("Delete Marker", 0.f)) {
                     auto iterator = m_nerf.mesh_markers.markers.begin();
                     while (iterator != m_nerf.mesh_markers.markers.end()) {
@@ -2970,6 +3008,7 @@ void draw_marker_mesh(
     const std::vector<vec3>& verts,
     const std::vector<vec3>& normals,
     const std::vector<vec3>& colors,
+	const std::vector<uint32_t>& indices,
     const ivec2& resolution,
     const vec2& focal_length,
     const mat4x3& camera_matrix,
@@ -2986,7 +3025,7 @@ void draw_marker_mesh(
         return;
     }
 
-    static GLuint program = 0, VAO = 0, VBO[3] = {}, vbosize = 0;
+    GLuint program = 0, VAO = 0, VBO[3] = {}, vbosize = 0, els = 0, elssize = 0;
     if (!VAO) {
         glGenVertexArrays(1, &VAO);
         glBindVertexArray(VAO);
@@ -3014,6 +3053,16 @@ void draw_marker_mesh(
 	glBindBuffer(GL_ARRAY_BUFFER, VBO[2]);
 	glBufferData(GL_ARRAY_BUFFER, vbosize * sizeof(vec3), colors.data(), GL_DYNAMIC_COPY);
 
+	if (elssize != indices.size()) {
+		if (els) {
+			glDeleteBuffers(1, &els);
+		}
+		glGenBuffers(1, &els);
+		elssize = indices.size();
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, els);
+		glBufferData(GL_ELEMENT_ARRAY_BUFFER, elssize * sizeof(int), indices.data(), GL_STREAM_DRAW);
+	}
+
     mat4 view2world = camera_matrix;
     mat4 world2view = inverse(view2world);
 		
@@ -3030,6 +3079,9 @@ void draw_marker_mesh(
     glUniform2f(glGetUniformLocation(program, "cen"), screen_center.x*2.f-1.f, screen_center.y*-2.f+1.f);
     glUniform2i(glGetUniformLocation(program, "res"), resolution.x, resolution.y);
 	glUniform1i(glGetUniformLocation(program, "mode"), mesh_render_mode);
+	if (elssize != 0) {
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, els);
+	}
 	glUniform1f(glGetUniformLocation(program, "alpha"), render_alpha);
 	glUniform1f(glGetUniformLocation(program, "zNear"), znear);
 	glUniform1f(glGetUniformLocation(program, "zFar"), zfar);
@@ -3048,7 +3100,11 @@ void draw_marker_mesh(
     glCullFace(GL_BACK);
     glDisable(GL_CULL_FACE);
     glEnable(GL_DEPTH_TEST);
-    glDrawArrays(GL_TRIANGLES, 0, verts.size());
+	if (elssize != 0) {
+		glDrawElements(GL_TRIANGLES, (GLsizei)elssize, GL_UNSIGNED_INT , (GLvoid*)0);
+	} else {
+		glDrawArrays(GL_TRIANGLES, 0, verts.size());
+	}
     glDisable(GL_CULL_FACE);
     glUseProgram(0);
 }
@@ -3222,6 +3278,7 @@ void Testbed::draw_gui() {
 					draw_marker_mesh(marker.mesh.verts, 
 						marker.mesh.vert_normals,
 						temp_color_buffer,
+						marker.mesh.indices,
 						res,
 						focal_length,
 						m_smoothed_camera,
