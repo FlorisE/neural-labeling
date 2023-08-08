@@ -657,6 +657,21 @@ bool imgui_colored_button(const char *name, float hue) {
 	return rv;
 }
 
+void Testbed::reload_meshes() {
+	m_nerf.mesh_markers.available_meshes.empty();
+	m_nerf.mesh_markers.available_meshes_str = "None";
+	if (fs::path(m_imgui.meshes_root_dir).is_directory()) {
+		for (const auto& path : fs::directory(m_imgui.meshes_root_dir)) {
+			if (path.is_file() && equals_case_insensitive(path.extension(), "obj")) {
+					m_nerf.mesh_markers.available_meshes.emplace_back(path.filename());
+					m_nerf.mesh_markers.available_meshes_str.append('\0' + path.filename());
+			}
+		}
+		m_nerf.mesh_markers.available_meshes_str.push_back('\0');
+		m_nerf.mesh_markers.available_meshes_str.push_back('\0');
+	}
+}
+
 void Testbed::imgui() {
 	// If a GUI interaction causes an error, write that error to the following string and call
 	//   ImGui::OpenPopup("Error");
@@ -775,6 +790,409 @@ void Testbed::imgui() {
 	}
 	ImGui::End();
 
+	ImGui::Begin("Labeling Tools");
+	{
+		ImGui::Text("Directory where meshes are loaded from and written to:");
+		ImGui::InputText("Meshes root directory", m_imgui.meshes_root_dir, sizeof(m_imgui.meshes_root_dir));
+
+		if (ImGui::TreeNode("Measuring")) {
+			ImGui::Checkbox("Render", &m_nerf.measure.render);
+			ImGui::Checkbox("Measure start", &m_nerf.measure.record_start);
+			ImGui::Checkbox("Measure end", &m_nerf.measure.record_end);
+			ImGui::SliderFloat("Thickness", &m_nerf.measure.thickness, 1.0f, 10.0f);
+			ImGui::ColorEdit3("Color", &m_nerf.measure.color[0]);
+			ImGui::Text("Distance: %0.6f", length((m_nerf.measure.end - m_nerf.measure.start)) / m_nerf.training.dataset.scale);
+			if (ImGui::Button("Clear")) {
+				m_nerf.measure.start = vec3::zero();
+				m_nerf.measure.end = vec3::zero();
+			}
+			ImGui::TreePop();
+		}
+
+		if (ImGui::TreeNode("Mesh extraction")) {
+			ImGui::Text("Output name without .obj extension");
+			ImGui::InputText("Output name", m_imgui.insert_bounding_box_path, sizeof(m_imgui.insert_bounding_box_path));
+			ImGui::BeginDisabled(m_imgui.insert_bounding_box_path[0] == '\0' || 
+									std::any_of(m_nerf.bounding_box_markers.markers.begin(),
+												m_nerf.bounding_box_markers.markers.end(),
+												[&] (const Testbed::Nerf::Marker& m) {
+												return strcmp(m.fs_path.c_str(), m_imgui.insert_bounding_box_path) == 0; 
+												})
+								);
+			ImGui::SameLine();
+			if (ImGui::Button("Add")) {
+				ImGui::CloseCurrentPopup();
+				mat4 transform = mat4::identity();
+				vec4 middle(0.5, 0.5, 0.5, 1.0);
+				transform[3] = middle;
+				add_bb_marker(m_imgui.insert_bounding_box_path, transform);
+				memset(m_imgui.insert_bounding_box_path, 0, sizeof(m_imgui.insert_bounding_box_path));
+				auto& bb_marker = m_nerf.bounding_box_markers.markers.back();
+				for (auto &marker: m_nerf.bounding_box_markers.markers) {
+					if (marker.selected) {
+						marker.selected = false;
+						break;
+					}
+				}
+				bb_marker.selected = true;
+				if (m_nerf.bounding_box_markers.marching_cubes.run_automatically) single_marker_marching_cubes(bb_marker, 1.0f, m_nerf.mesh_markers.marching_cubes.thresh, m_nerf.mesh_markers.marching_cubes.res);
+			}
+			ImGui::EndDisabled();
+
+            if (ImGui::BeginListBox("Bounding boxes")) {
+				for (int i = 0; i < m_nerf.bounding_box_markers.markers.size(); ++i) {
+					auto& bb_marker =  m_nerf.bounding_box_markers.markers[i];
+                    ImGui::PushID(&bb_marker);
+					if (ImGui::Selectable(bb_marker.fs_path.c_str(), bb_marker.selected)) {
+						if (!bb_marker.selected) {
+                            for (auto &marker: m_nerf.bounding_box_markers.markers) {
+                                if (marker.selected) {
+                                    marker.selected = false;
+                                    break;
+                                }
+                            }
+                            bb_marker.selected = true;
+                        } else {
+                            bb_marker.selected = false;
+                        }
+					}
+                    ImGui::PopID();
+				}
+                ImGui::EndListBox();
+            }
+
+			{
+				auto iterator = std::find_if(m_nerf.bounding_box_markers.markers.begin(), m_nerf.bounding_box_markers.markers.end(), [&](const Testbed::Nerf::Marker& m) { return m.selected; });
+				if (iterator != m_nerf.bounding_box_markers.markers.end()) {
+					auto& bb_marker = *iterator;
+					if (ImGui::Button("Duplicate")) {
+						ImGui::OpenPopup("Duplicate bounding box");
+						strcpy(m_imgui.insert_bounding_box_path, bb_marker.fs_path.c_str());
+					}
+					ImGui::SameLine();
+					if (ImGui::Button("Rename")) {
+						ImGui::OpenPopup("Rename bounding box");
+						strcpy(m_imgui.insert_bounding_box_path, bb_marker.fs_path.c_str());
+					}
+					ImGui::SameLine();
+					if (imgui_colored_button("Delete", 0.f)) {
+						auto new_iterator = m_nerf.bounding_box_markers.markers.erase(iterator);
+						if (new_iterator != m_nerf.bounding_box_markers.markers.end()) {
+							new_iterator->selected = true;
+						}
+					}
+					ImGui::SameLine();
+					if (ImGui::Button("Bounding box to marker")) {
+						Testbed::Nerf::Marker new_marker;
+						new_marker.transform[0] = bb_marker.transform[0];
+						new_marker.transform[1] = bb_marker.transform[1];
+						new_marker.transform[2] = bb_marker.transform[2];
+						new_marker.transform[3] = bb_marker.transform[3];
+						new_marker.bounding_box.min = iterator->bounding_box.min;
+						new_marker.bounding_box.max = iterator->bounding_box.max;
+						new_marker.instance_color = iterator->instance_color;
+						new_marker.mesh.vert_colors = iterator->mc_colors;
+						new_marker.mesh.vert_normals = iterator->mc_normals;
+						new_marker.mesh.indices = iterator->mc_indices;
+						new_marker.mesh.verts.reserve(iterator->mc_verts.size());
+						// verts for MC are in world coordinates, but mesh verts are in local coordinates
+						for (int i = 0; i < iterator->mc_verts.size(); ++i) {
+							new_marker.mesh.verts.push_back(iterator->mc_verts[i] - bb_marker.transform[3]);
+						}
+						new_marker.fs_path = iterator->fs_path;
+						m_nerf.mesh_markers.markers.push_back(new_marker);
+					}
+
+					if (ImGui::BeginPopupModal("Rename bounding box", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+						ImGui::InputText("Output name", m_imgui.insert_bounding_box_path, sizeof(m_imgui.insert_bounding_box_path));
+						ImGui::BeginDisabled(m_imgui.insert_bounding_box_path[0] == '\0' || 
+						                     std::any_of(m_nerf.bounding_box_markers.markers.begin(),
+											             m_nerf.bounding_box_markers.markers.end(),
+													     [&] (const Testbed::Nerf::Marker& m) {
+															if (&m == &bb_marker) { return false; }
+														    return strcmp(m.fs_path.c_str(), m_imgui.insert_bounding_box_path) == 0; 
+													      })
+											);
+						if (ImGui::Button("OK", ImVec2(120, 0))) {
+							ImGui::CloseCurrentPopup();
+							bb_marker.fs_path = m_imgui.insert_bounding_box_path;
+							memset(m_imgui.insert_bounding_box_path, 0, sizeof(m_imgui.insert_bounding_box_path));
+						}
+						ImGui::EndDisabled();
+						ImGui::SameLine();
+						if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+							ImGui::CloseCurrentPopup();
+							memset(m_imgui.insert_bounding_box_path, 0, sizeof(m_imgui.insert_bounding_box_path));
+						}
+						ImGui::EndPopup();
+					}
+
+					if (ImGui::BeginPopupModal("Duplicate bounding box", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+						ImGui::InputText("Output name", m_imgui.insert_bounding_box_path, sizeof(m_imgui.insert_bounding_box_path));
+						ImGui::BeginDisabled(m_imgui.insert_bounding_box_path[0] == '\0' || 
+						                     std::any_of(m_nerf.bounding_box_markers.markers.begin(),
+											             m_nerf.bounding_box_markers.markers.end(),
+													     [&] (const Testbed::Nerf::Marker& m) {
+														   return strcmp(m.fs_path.c_str(), m_imgui.insert_bounding_box_path) == 0; 
+													      })
+											);
+						if (ImGui::Button("OK", ImVec2(120, 0))) {
+							ImGui::CloseCurrentPopup();
+							add_bb_marker(m_imgui.insert_bounding_box_path, bb_marker.transform, bb_marker.bounding_box.min, bb_marker.bounding_box.max);
+							for (auto& bb_marker : m_nerf.bounding_box_markers.markers) {
+								bb_marker.selected = false;
+							}
+							auto& bb_marker = m_nerf.bounding_box_markers.markers.back();
+							bb_marker.selected = true;
+							memset(m_imgui.insert_bounding_box_path, 0, sizeof(m_imgui.insert_bounding_box_path));
+							if (m_nerf.bounding_box_markers.marching_cubes.run_automatically) single_marker_marching_cubes(bb_marker, 1.0f, m_nerf.mesh_markers.marching_cubes.thresh, m_nerf.mesh_markers.marching_cubes.res);
+						}
+						ImGui::EndDisabled();
+						ImGui::SameLine();
+						if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+							ImGui::CloseCurrentPopup();
+							memset(m_imgui.insert_bounding_box_path, 0, sizeof(m_imgui.insert_bounding_box_path));
+						}
+						ImGui::EndPopup();
+					}
+				}
+			}
+
+			{
+				auto iterator = std::find_if(m_nerf.bounding_box_markers.markers.begin(), m_nerf.bounding_box_markers.markers.end(), [&](const Testbed::Nerf::Marker& m) { return m.selected; });
+				if (iterator != m_nerf.bounding_box_markers.markers.end()) {
+					ImGui::Separator();
+					auto& bb_marker = *iterator;
+					ImGui::ColorEdit3("Instance color", &bb_marker.instance_color[0]);
+
+					float diam = max((bb_marker.bounding_box.max-bb_marker.bounding_box.min));
+					float old_diam = diam;
+					if (ImGui::SliderFloat("Size", &diam, 0.1f, 4.0f, "%.3f", ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_NoRoundToFormat)) {
+						if (old_diam > 0.f && diam > 0.f) {
+							const vec3 center = (bb_marker.bounding_box.max + bb_marker.bounding_box.min) * 0.5f;
+							float scale = diam / old_diam;
+							bb_marker.bounding_box.max = (bb_marker.bounding_box.max-center) * scale + center;
+							bb_marker.bounding_box.min = (bb_marker.bounding_box.min-center) * scale + center;
+							if (m_nerf.bounding_box_markers.marching_cubes.run_automatically) single_marker_marching_cubes(bb_marker, 1.0f, m_nerf.mesh_markers.marching_cubes.thresh, m_nerf.mesh_markers.marching_cubes.res);
+						}
+					}
+					if (ImGui::TreeNode("Fine-grained size controls")) {
+						vec3 diag = bb_marker.bounding_box.diag();
+						bool edit_diag = false;
+						edit_diag |= ImGui::SliderFloat("Size x", ((float*)&diag)+0, 0.001f, 2.0f, "%.3f");
+						edit_diag |= ImGui::SliderFloat("Size y", ((float*)&diag)+1, 0.001f, 2.0f, "%.3f");
+						edit_diag |= ImGui::SliderFloat("Size z", ((float*)&diag)+2, 0.001f, 2.0f, "%.3f");
+						if (edit_diag) {
+							vec3 cen = bb_marker.bounding_box.center();
+							bb_marker.bounding_box = BoundingBox(cen - diag * 0.5f, cen + diag * 0.5f);
+							if (m_nerf.bounding_box_markers.marching_cubes.run_automatically) single_marker_marching_cubes(bb_marker, 1.0f, m_nerf.mesh_markers.marching_cubes.thresh, m_nerf.mesh_markers.marching_cubes.res);
+						}
+						ImGui::TreePop();
+					}
+
+					if (ImGui::RadioButton("Translate", m_nerf.bounding_box_markers.guizmo_op == ImGuizmo::TRANSLATE))
+						m_nerf.bounding_box_markers.guizmo_op = ImGuizmo::TRANSLATE;
+					ImGui::SameLine();
+					if (ImGui::RadioButton("Rotate", m_nerf.bounding_box_markers.guizmo_op == ImGuizmo::ROTATE))
+						m_nerf.bounding_box_markers.guizmo_op = ImGuizmo::ROTATE;
+
+					ImGui::Separator();
+				}
+            }
+
+			if (m_nerf.bounding_box_markers.markers.size() > 0) {
+				if (ImGui::TreeNode("Geometry")) {
+					ImGui::Checkbox("Generate on change", &m_nerf.bounding_box_markers.marching_cubes.run_automatically);
+					if (ImGui::Button("Regenerate")) {
+						bounding_box_marching_cubes();
+					}
+					ImGui::SameLine();
+					if (ImGui::Button("Export meshes")) {
+						for (auto& marker : m_nerf.bounding_box_markers.markers) {
+							save_mesh_cpu(marker.mc_verts, marker.mc_normals, marker.mc_colors, marker.mc_indices, fs::path(m_imgui.meshes_root_dir) / fs::path(marker.fs_path).with_extension("obj"), m_mesh.unwrap, m_nerf.training.dataset.scale, m_nerf.training.dataset.offset);
+						}
+					}
+					ImGui::SameLine();
+					if (ImGui::Button("Shrink to fit geometry")) {
+						shrink_bounding_boxes(m_stream.get());
+					}
+
+
+					if (ImGui::SliderFloat("MC density threshold",&m_nerf.bounding_box_markers.marching_cubes.thresh, -10.0f, 10.0f) && m_nerf.bounding_box_markers.marching_cubes.run_automatically) {
+						bounding_box_marching_cubes();
+					}
+					if (ImGui::SliderInt("Res:", &m_nerf.bounding_box_markers.marching_cubes.res, 16, 2048, "%d", ImGuiSliderFlags_Logarithmic) && m_nerf.bounding_box_markers.marching_cubes.run_automatically) {
+						bounding_box_marching_cubes();
+					}
+					ImGui::SameLine();
+
+					auto res3d = get_marching_cubes_res(m_nerf.bounding_box_markers.marching_cubes.res, m_nerf.bounding_box_markers.markers[0].bounding_box);
+					ImGui::Text("%dx%dx%d", res3d.x, res3d.y, res3d.z);
+					ImGui::Text("If GUI gets too slow disable 'Generate on change'");
+
+					ImGui::TreePop();
+				}
+			}
+
+			if (ImGui::TreeNode("Load / save")) {
+				ImGui::InputText("Bounding box JSON path", m_imgui.insert_bounding_boxes_path, sizeof(m_imgui.insert_bounding_boxes_path));
+				if (ImGui::Button("Save bounding boxes")) {
+					save_bounding_boxes(m_imgui.insert_bounding_boxes_path);
+				}
+				if (ImGui::Button("Insert bounding boxes")) {
+					add_bounding_boxes(m_imgui.insert_bounding_boxes_path);
+				}
+            	ImGui::TreePop();
+			}
+
+			if (ImGui::TreeNode("Render options")) {
+				ImGui::Combo("MC render mode", (int*)&m_nerf.bounding_box_markers.marching_cubes.render_mode, "Off\0Vertex Colors\0Vertex Normals\0\0");
+				ImGui::Combo("Bounding box render mode", (int*)&m_nerf.bounding_box_markers.render_mode, "Off\0Selected\0All\0\0");
+				ImGui::TreePop();
+			}
+
+			ImGui::TreePop();
+		}
+
+		if (ImGui::TreeNode("Labeling")) {
+			ImGui::Combo("Meshes", &m_nerf.mesh_markers.selected_mesh, m_nerf.mesh_markers.available_meshes_str.c_str());
+			ImGui::SameLine();
+			if (ImGui::Button("Reload")) {
+				reload_meshes();
+			}
+			if (m_nerf.mesh_markers.selected_mesh != 0) {
+				if (ImGui::Button("Insert mesh")) {
+					add_marker(fs::path(m_imgui.meshes_root_dir) / m_nerf.mesh_markers.available_meshes[m_nerf.mesh_markers.selected_mesh-1]);
+				}
+			}
+            if (ImGui::BeginListBox("Meshes")) {
+                for (int i = 0; i < m_nerf.mesh_markers.markers.size(); ++i) {
+                    ImGui::PushID(i);
+                    if (ImGui::Selectable(m_nerf.mesh_markers.markers[i].fs_path.c_str(), m_nerf.mesh_markers.markers[i].selected)) {
+                        if (!m_nerf.mesh_markers.markers[i].selected) {
+                            for (auto &marker: m_nerf.mesh_markers.markers) {
+                                if (marker.selected) {
+                                    marker.selected = false;
+                                    break;
+                                }
+                            }
+                            m_nerf.mesh_markers.markers[i].selected = true;
+                        } else {
+                            m_nerf.mesh_markers.markers[i].selected = false;
+                        }
+                    };
+                    ImGui::PopID();
+                }
+                ImGui::EndListBox();
+            }
+            if (std::any_of(m_nerf.mesh_markers.markers.begin(), m_nerf.mesh_markers.markers.end(), [&](const Testbed::Nerf::Marker& m) { return m.selected; })) {
+				auto iterator = m_nerf.mesh_markers.markers.begin();
+				while (iterator != m_nerf.mesh_markers.markers.end()) {
+					if ((*iterator).selected) {
+						ImGui::ColorEdit3("Instance color", &(iterator->instance_color[0]));
+						break;
+					}
+					++iterator;
+				}
+                if (ImGui::RadioButton("Translate", m_nerf.mesh_markers.guizmo_op == ImGuizmo::TRANSLATE))
+                    m_nerf.mesh_markers.guizmo_op = ImGuizmo::TRANSLATE;
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Rotate", m_nerf.mesh_markers.guizmo_op == ImGuizmo::ROTATE))
+                    m_nerf.mesh_markers.guizmo_op = ImGuizmo::ROTATE;
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Scale", m_nerf.mesh_markers.guizmo_op == ImGuizmo::SCALE))
+                    m_nerf.mesh_markers.guizmo_op = ImGuizmo::SCALE;
+				if (m_nerf.mesh_markers.guizmo_op == ImGuizmo::ROTATE) {
+    				ImGui::Checkbox("##snap", &m_nerf.mesh_markers.use_snap);
+					ImGui::SameLine();
+					ImGui::InputFloat("Angle Snap", &m_nerf.mesh_markers.snap);
+				}
+                if (ImGui::Button("Duplicate Marker")) {
+					Testbed::Nerf::Marker new_marker;
+					new_marker.transform[0] = iterator->transform[0];
+					new_marker.transform[1] = iterator->transform[1];
+					new_marker.transform[2] = iterator->transform[2];
+					new_marker.transform[3] = iterator->transform[3];
+					new_marker.bounding_box.min = iterator->bounding_box.min;
+					new_marker.bounding_box.max = iterator->bounding_box.max;
+					new_marker.instance_color = iterator->instance_color;
+				    new_marker.mesh = iterator->mesh;
+				    new_marker.fs_path = iterator->fs_path;
+				    new_marker.selected = true;
+				    iterator->selected = false;
+                    m_nerf.mesh_markers.markers.push_back(new_marker);
+                }
+				ImGui::SameLine();
+                if (imgui_colored_button("Delete Marker", 0.f)) {
+                    auto iterator = m_nerf.mesh_markers.markers.begin();
+                    while (iterator != m_nerf.mesh_markers.markers.end()) {
+                        if ((*iterator).selected) {
+                            m_nerf.mesh_markers.markers.erase(iterator);
+                            break;
+                        }
+                        ++iterator;
+                    }
+                }
+            }
+
+			if (ImGui::TreeNode("Load / save")) {
+				ImGui::InputText("Mesh JSON path", m_imgui.insert_meshes_path, sizeof(m_imgui.insert_meshes_path));
+				if (ImGui::Button("Save meshes")) {
+					save_markers(m_imgui.insert_meshes_path);
+				}
+				if (ImGui::Button("Insert meshes")) {
+					add_markers(m_imgui.insert_meshes_path);
+				}
+            	ImGui::TreePop();
+			}
+
+
+			if (ImGui::TreeNode("Insertion options")) {
+				m_nerf.mesh_markers.edit_insertion_transform = true;
+                if (ImGui::RadioButton("Translate", m_nerf.mesh_markers.insertion_op == ImGuizmo::TRANSLATE))
+                    m_nerf.mesh_markers.insertion_op = ImGuizmo::TRANSLATE;
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Rotate", m_nerf.mesh_markers.insertion_op == ImGuizmo::ROTATE))
+                    m_nerf.mesh_markers.insertion_op = ImGuizmo::ROTATE;
+
+            	ImGui::TreePop();
+			} else {
+				m_nerf.mesh_markers.edit_insertion_transform = false;
+			}
+
+			if (ImGui::TreeNode("Render options")) {
+				ImGui::SliderFloat("Opacity", &m_markers_render_alpha, 0.f, 1.f);
+				ImGui::Checkbox("Render 2D bounding boxes", &m_nerf.mesh_markers.render_bounding_boxes);
+				ImGui::Checkbox("Render 3D bounding boxes", &m_nerf.mesh_markers.render_3d_bounding_boxes);
+				ImGui::Checkbox("Render NeRF overlay", &m_nerf.mesh_markers.render_nerf_overlay);
+				ImGui::Combo("Render mode", (int*)&m_nerf.mesh_markers.render_mode, CustomMeshRenderModeStr);
+				ImGui::InputFloat("Mean marker depth", &m_nerf.mesh_markers.mean_marker_depth, 0.0f, 0.0f, "%.3f", ImGuiInputTextFlags_ReadOnly);
+				ImGui::InputFloat("Mean NeRF depth", &m_nerf.mesh_markers.mean_nerf_depth, 0.0f, 0.0f, "%.3f", ImGuiInputTextFlags_ReadOnly);
+            	ImGui::TreePop();
+			}
+
+			if (ImGui::TreeNode("Alignment optimization")) {
+				if (ImGui::Button("Optimize alignment")) {
+					m_nerf.mesh_markers.optimize_alignment = true;
+					optimise_markers(m_nerf.mesh_markers.marching_cubes.optimization_steps, m_nerf.mesh_markers.marching_cubes.scale, m_nerf.mesh_markers.marching_cubes.thresh, m_nerf.mesh_markers.marching_cubes.res);
+					m_nerf.mesh_markers.optimize_alignment = false;
+				}
+				ImGui::SliderInt("# optimization steps", &m_nerf.mesh_markers.marching_cubes.optimization_steps, 1, 10);
+				ImGui::SliderFloat("Max distance filter threshold", &m_nerf.mesh_markers.marching_cubes.max_distance_filter_threshold, 0.01f, 1.f);
+				ImGui::Checkbox("Render MC bounding boxes", &m_nerf.mesh_markers.marching_cubes.render_bounding_boxes);
+
+				if (ImGui::Button("Preview marching cubes")) {
+					marker_marching_cubes();
+				}
+				ImGui::SliderFloat("Marker MC growth", &m_nerf.mesh_markers.marching_cubes.scale, 1.f, 2.f);
+				ImGui::Combo("MC render mode", (int*)&m_nerf.mesh_markers.marching_cubes.render_mode, "Off\0Vertex Colors\0Vertex Normals\0\0");
+            	ImGui::TreePop();
+			}
+
+            ImGui::TreePop();
+        }
+	}
+	ImGui::End();
 
 	bool train_extra_dims = m_nerf.training.dataset.n_extra_learnable_dims > 0;
 	if (train_extra_dims && m_nerf.training.n_images_for_training > 0) {
@@ -1442,413 +1860,6 @@ void Testbed::imgui() {
 		}
 	}
 
-	if (ImGui::CollapsingHeader("Labeling Tools")) {
-		ImGui::Text("Directory where meshes are loaded from and written to:");
-		ImGui::InputText("Meshes root directory", m_imgui.meshes_root_dir, sizeof(m_imgui.meshes_root_dir));
-
-		if (ImGui::TreeNode("Measuring")) {
-			ImGui::Checkbox("Render", &m_nerf.measure.render);
-			ImGui::Checkbox("Measure start", &m_nerf.measure.record_start);
-			ImGui::Checkbox("Measure end", &m_nerf.measure.record_end);
-			ImGui::SliderFloat("Thickness", &m_nerf.measure.thickness, 1.0f, 10.0f);
-			ImGui::ColorEdit3("Color", &m_nerf.measure.color[0]);
-			ImGui::Text("Distance: %0.6f", length((m_nerf.measure.end - m_nerf.measure.start)) / m_nerf.training.dataset.scale);
-			if (ImGui::Button("Clear")) {
-				m_nerf.measure.start = vec3::zero();
-				m_nerf.measure.end = vec3::zero();
-			}
-			ImGui::TreePop();
-		}
-
-		if (ImGui::TreeNode("Mesh extraction")) {
-			ImGui::Text("Output name without .obj extension");
-			ImGui::InputText("Output name", m_imgui.insert_bounding_box_path, sizeof(m_imgui.insert_bounding_box_path));
-			ImGui::BeginDisabled(m_imgui.insert_bounding_box_path[0] == '\0' || 
-									std::any_of(m_nerf.bounding_box_markers.markers.begin(),
-												m_nerf.bounding_box_markers.markers.end(),
-												[&] (const Testbed::Nerf::Marker& m) {
-												return strcmp(m.fs_path.c_str(), m_imgui.insert_bounding_box_path) == 0; 
-												})
-								);
-			ImGui::SameLine();
-			if (ImGui::Button("Add")) {
-				ImGui::CloseCurrentPopup();
-				mat4 transform = mat4::identity();
-				vec4 middle(0.5, 0.5, 0.5, 1.0);
-				transform[3] = middle;
-				add_bb_marker(m_imgui.insert_bounding_box_path, transform);
-				memset(m_imgui.insert_bounding_box_path, 0, sizeof(m_imgui.insert_bounding_box_path));
-				auto& bb_marker = m_nerf.bounding_box_markers.markers.back();
-				for (auto &marker: m_nerf.bounding_box_markers.markers) {
-					if (marker.selected) {
-						marker.selected = false;
-						break;
-					}
-				}
-				bb_marker.selected = true;
-				if (m_nerf.bounding_box_markers.marching_cubes.run_automatically) single_marker_marching_cubes(bb_marker, 1.0f, m_nerf.mesh_markers.marching_cubes.thresh, m_nerf.mesh_markers.marching_cubes.res);
-			}
-			ImGui::EndDisabled();
-
-            if (ImGui::BeginListBox("Bounding boxes")) {
-				for (int i = 0; i < m_nerf.bounding_box_markers.markers.size(); ++i) {
-					auto& bb_marker =  m_nerf.bounding_box_markers.markers[i];
-                    ImGui::PushID(&bb_marker);
-					if (ImGui::Selectable(bb_marker.fs_path.c_str(), bb_marker.selected)) {
-						if (!bb_marker.selected) {
-                            for (auto &marker: m_nerf.bounding_box_markers.markers) {
-                                if (marker.selected) {
-                                    marker.selected = false;
-                                    break;
-                                }
-                            }
-                            bb_marker.selected = true;
-                        } else {
-                            bb_marker.selected = false;
-                        }
-					}
-                    ImGui::PopID();
-				}
-                ImGui::EndListBox();
-            }
-
-			{
-				auto iterator = std::find_if(m_nerf.bounding_box_markers.markers.begin(), m_nerf.bounding_box_markers.markers.end(), [&](const Testbed::Nerf::Marker& m) { return m.selected; });
-				if (iterator != m_nerf.bounding_box_markers.markers.end()) {
-					auto& bb_marker = *iterator;
-					if (ImGui::Button("Duplicate")) {
-						ImGui::OpenPopup("Duplicate bounding box");
-						strcpy(m_imgui.insert_bounding_box_path, bb_marker.fs_path.c_str());
-					}
-					ImGui::SameLine();
-					if (ImGui::Button("Rename")) {
-						ImGui::OpenPopup("Rename bounding box");
-						strcpy(m_imgui.insert_bounding_box_path, bb_marker.fs_path.c_str());
-					}
-					ImGui::SameLine();
-					if (imgui_colored_button("Delete", 0.f)) {
-						auto new_iterator = m_nerf.bounding_box_markers.markers.erase(iterator);
-						if (new_iterator != m_nerf.bounding_box_markers.markers.end()) {
-							new_iterator->selected = true;
-						}
-					}
-					ImGui::SameLine();
-					if (ImGui::Button("Bounding box to marker")) {
-						Testbed::Nerf::Marker new_marker;
-						new_marker.transform[0] = bb_marker.transform[0];
-						new_marker.transform[1] = bb_marker.transform[1];
-						new_marker.transform[2] = bb_marker.transform[2];
-						new_marker.transform[3] = bb_marker.transform[3];
-						new_marker.bounding_box.min = iterator->bounding_box.min;
-						new_marker.bounding_box.max = iterator->bounding_box.max;
-						new_marker.instance_color = iterator->instance_color;
-						new_marker.mesh.vert_colors = iterator->mc_colors;
-						new_marker.mesh.vert_normals = iterator->mc_normals;
-						new_marker.mesh.indices = iterator->mc_indices;
-						new_marker.mesh.verts.reserve(iterator->mc_verts.size());
-						// verts for MC are in world coordinates, but mesh verts are in local coordinates
-						for (int i = 0; i < iterator->mc_verts.size(); ++i) {
-							new_marker.mesh.verts.push_back(iterator->mc_verts[i] - bb_marker.transform[3]);
-						}
-						new_marker.fs_path = iterator->fs_path;
-						m_nerf.mesh_markers.markers.push_back(new_marker);
-					}
-
-					if (ImGui::BeginPopupModal("Rename bounding box", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-						ImGui::InputText("Output name", m_imgui.insert_bounding_box_path, sizeof(m_imgui.insert_bounding_box_path));
-						ImGui::BeginDisabled(m_imgui.insert_bounding_box_path[0] == '\0' || 
-						                     std::any_of(m_nerf.bounding_box_markers.markers.begin(),
-											             m_nerf.bounding_box_markers.markers.end(),
-													     [&] (const Testbed::Nerf::Marker& m) {
-															if (&m == &bb_marker) { return false; }
-														    return strcmp(m.fs_path.c_str(), m_imgui.insert_bounding_box_path) == 0; 
-													      })
-											);
-						if (ImGui::Button("OK", ImVec2(120, 0))) {
-							ImGui::CloseCurrentPopup();
-							bb_marker.fs_path = m_imgui.insert_bounding_box_path;
-							memset(m_imgui.insert_bounding_box_path, 0, sizeof(m_imgui.insert_bounding_box_path));
-						}
-						ImGui::EndDisabled();
-						ImGui::SameLine();
-						if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-							ImGui::CloseCurrentPopup();
-							memset(m_imgui.insert_bounding_box_path, 0, sizeof(m_imgui.insert_bounding_box_path));
-						}
-						ImGui::EndPopup();
-					}
-
-					if (ImGui::BeginPopupModal("Duplicate bounding box", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-						ImGui::InputText("Output name", m_imgui.insert_bounding_box_path, sizeof(m_imgui.insert_bounding_box_path));
-						ImGui::BeginDisabled(m_imgui.insert_bounding_box_path[0] == '\0' || 
-						                     std::any_of(m_nerf.bounding_box_markers.markers.begin(),
-											             m_nerf.bounding_box_markers.markers.end(),
-													     [&] (const Testbed::Nerf::Marker& m) {
-														   return strcmp(m.fs_path.c_str(), m_imgui.insert_bounding_box_path) == 0; 
-													      })
-											);
-						if (ImGui::Button("OK", ImVec2(120, 0))) {
-							ImGui::CloseCurrentPopup();
-							add_bb_marker(m_imgui.insert_bounding_box_path, bb_marker.transform, bb_marker.bounding_box.min, bb_marker.bounding_box.max);
-							for (auto& bb_marker : m_nerf.bounding_box_markers.markers) {
-								bb_marker.selected = false;
-							}
-							auto& bb_marker = m_nerf.bounding_box_markers.markers.back();
-							bb_marker.selected = true;
-							memset(m_imgui.insert_bounding_box_path, 0, sizeof(m_imgui.insert_bounding_box_path));
-							if (m_nerf.bounding_box_markers.marching_cubes.run_automatically) single_marker_marching_cubes(bb_marker, 1.0f, m_nerf.mesh_markers.marching_cubes.thresh, m_nerf.mesh_markers.marching_cubes.res);
-						}
-						ImGui::EndDisabled();
-						ImGui::SameLine();
-						if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-							ImGui::CloseCurrentPopup();
-							memset(m_imgui.insert_bounding_box_path, 0, sizeof(m_imgui.insert_bounding_box_path));
-						}
-						ImGui::EndPopup();
-					}
-				}
-			}
-
-			{
-				auto iterator = std::find_if(m_nerf.bounding_box_markers.markers.begin(), m_nerf.bounding_box_markers.markers.end(), [&](const Testbed::Nerf::Marker& m) { return m.selected; });
-				if (iterator != m_nerf.bounding_box_markers.markers.end()) {
-					ImGui::Separator();
-					auto& bb_marker = *iterator;
-					ImGui::ColorEdit3("Instance color", &bb_marker.instance_color[0]);
-
-					float diam = max((bb_marker.bounding_box.max-bb_marker.bounding_box.min));
-					float old_diam = diam;
-					if (ImGui::SliderFloat("Size", &diam, 0.1f, 4.0f, "%.3f", ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_NoRoundToFormat)) {
-						if (old_diam > 0.f && diam > 0.f) {
-							const vec3 center = (bb_marker.bounding_box.max + bb_marker.bounding_box.min) * 0.5f;
-							float scale = diam / old_diam;
-							bb_marker.bounding_box.max = (bb_marker.bounding_box.max-center) * scale + center;
-							bb_marker.bounding_box.min = (bb_marker.bounding_box.min-center) * scale + center;
-							if (m_nerf.bounding_box_markers.marching_cubes.run_automatically) single_marker_marching_cubes(bb_marker, 1.0f, m_nerf.mesh_markers.marching_cubes.thresh, m_nerf.mesh_markers.marching_cubes.res);
-						}
-					}
-					if (ImGui::TreeNode("Fine-grained size controls")) {
-						// bool edit_center = false;
-						// Eigen::Vector3f old_diag = bb_marker.bounding_box.diag();
-						// edit_center |= ImGui::SliderFloat("Min x", ((float*)&bb_marker.bounding_box.min)+0, -1, bb_marker.bounding_box.max.x(), "%.3f");
-						// edit_center |= ImGui::SliderFloat("Min y", ((float*)&bb_marker.bounding_box.min)+1, -1, bb_marker.bounding_box.max.y(), "%.3f");
-						// edit_center |= ImGui::SliderFloat("Min z", ((float*)&bb_marker.bounding_box.min)+2, -1, bb_marker.bounding_box.max.z(), "%.3f");
-						// ImGui::Separator();
-						// edit_center |= ImGui::SliderFloat("Max x", ((float*)&bb_marker.bounding_box.max)+0, bb_marker.bounding_box.min.x(), 1, "%.3f");
-						// edit_center |= ImGui::SliderFloat("Max y", ((float*)&bb_marker.bounding_box.max)+1, bb_marker.bounding_box.min.y(), 1, "%.3f");
-						// edit_center |= ImGui::SliderFloat("Max z", ((float*)&bb_marker.bounding_box.max)+2, bb_marker.bounding_box.min.z(), 1, "%.3f");
-						// ImGui::Separator();
-						// if (edit_center) {
-						// 	bb_marker.transform.block(0, 3, 3, 1) += 0.5 * (bb_marker.bounding_box.diag() - old_diag);
-						// }
-						vec3 diag = bb_marker.bounding_box.diag();
-						bool edit_diag = false;
-						edit_diag |= ImGui::SliderFloat("Size x", ((float*)&diag)+0, 0.001f, 2.0f, "%.3f");
-						edit_diag |= ImGui::SliderFloat("Size y", ((float*)&diag)+1, 0.001f, 2.0f, "%.3f");
-						edit_diag |= ImGui::SliderFloat("Size z", ((float*)&diag)+2, 0.001f, 2.0f, "%.3f");
-						if (edit_diag) {
-							vec3 cen = bb_marker.bounding_box.center();
-							bb_marker.bounding_box = BoundingBox(cen - diag * 0.5f, cen + diag * 0.5f);
-							if (m_nerf.bounding_box_markers.marching_cubes.run_automatically) single_marker_marching_cubes(bb_marker, 1.0f, m_nerf.mesh_markers.marching_cubes.thresh, m_nerf.mesh_markers.marching_cubes.res);
-						}
-						ImGui::TreePop();
-					}
-
-					if (ImGui::RadioButton("Translate", m_nerf.bounding_box_markers.guizmo_op == ImGuizmo::TRANSLATE))
-						m_nerf.bounding_box_markers.guizmo_op = ImGuizmo::TRANSLATE;
-					ImGui::SameLine();
-					if (ImGui::RadioButton("Rotate", m_nerf.bounding_box_markers.guizmo_op == ImGuizmo::ROTATE))
-						m_nerf.bounding_box_markers.guizmo_op = ImGuizmo::ROTATE;
-
-					ImGui::Separator();
-				}
-            }
-
-			if (m_nerf.bounding_box_markers.markers.size() > 0) {
-				if (ImGui::TreeNode("Geometry")) {
-					ImGui::Checkbox("Generate on change", &m_nerf.bounding_box_markers.marching_cubes.run_automatically);
-					if (ImGui::Button("Regenerate")) {
-						bounding_box_marching_cubes();
-					}
-					ImGui::SameLine();
-					if (ImGui::Button("Export meshes")) {
-						for (auto& marker : m_nerf.bounding_box_markers.markers) {
-							save_mesh_cpu(marker.mc_verts, marker.mc_normals, marker.mc_colors, marker.mc_indices, fs::path(m_imgui.meshes_root_dir) / fs::path(marker.fs_path).with_extension("obj"), m_mesh.unwrap, m_nerf.training.dataset.scale, m_nerf.training.dataset.offset);
-						}
-					}
-					ImGui::SameLine();
-					if (ImGui::Button("Shrink to fit geometry")) {
-						shrink_bounding_boxes(m_stream.get());
-					}
-
-
-					if (ImGui::SliderFloat("MC density threshold",&m_nerf.bounding_box_markers.marching_cubes.thresh, -10.0f, 10.0f) && m_nerf.bounding_box_markers.marching_cubes.run_automatically) {
-						bounding_box_marching_cubes();
-					}
-					if (ImGui::SliderInt("Res:", &m_nerf.bounding_box_markers.marching_cubes.res, 16, 2048, "%d", ImGuiSliderFlags_Logarithmic) && m_nerf.bounding_box_markers.marching_cubes.run_automatically) {
-						bounding_box_marching_cubes();
-					}
-					ImGui::SameLine();
-
-					auto res3d = get_marching_cubes_res(m_nerf.bounding_box_markers.marching_cubes.res, m_nerf.bounding_box_markers.markers[0].bounding_box);
-					ImGui::Text("%dx%dx%d", res3d.x, res3d.y, res3d.z);
-					ImGui::Text("If GUI gets too slow disable 'Generate on change'");
-
-					ImGui::TreePop();
-				}
-			}
-
-			if (ImGui::TreeNode("Load / save")) {
-				ImGui::InputText("Bounding box JSON path", m_imgui.insert_bounding_boxes_path, sizeof(m_imgui.insert_bounding_boxes_path));
-				if (ImGui::Button("Save bounding boxes")) {
-					save_bounding_boxes(m_imgui.insert_bounding_boxes_path);
-				}
-				if (ImGui::Button("Insert bounding boxes")) {
-					add_bounding_boxes(m_imgui.insert_bounding_boxes_path);
-				}
-            	ImGui::TreePop();
-			}
-
-			if (ImGui::TreeNode("Render options")) {
-				ImGui::Combo("MC render mode", (int*)&m_nerf.bounding_box_markers.marching_cubes.render_mode, "Off\0Vertex Colors\0Vertex Normals\0\0");
-				ImGui::Combo("Bounding box render mode", (int*)&m_nerf.bounding_box_markers.render_mode, "Off\0Selected\0All\0\0");
-				ImGui::TreePop();
-			}
-
-			ImGui::TreePop();
-		}
-
-		if (ImGui::TreeNode("Labeling")) {
-			ImGui::Combo("Meshes", &m_nerf.mesh_markers.selected_mesh, m_nerf.mesh_markers.available_meshes_str.c_str());
-			ImGui::SameLine();
-			if (ImGui::Button("Reload")) {
-				m_nerf.mesh_markers.available_meshes.empty();
-				m_nerf.mesh_markers.available_meshes_str = "None";
-				if (fs::path(m_imgui.meshes_root_dir).is_directory()) {
-					for (const auto& path : fs::directory(m_imgui.meshes_root_dir)) {
-						if (path.is_file() && equals_case_insensitive(path.extension(), "obj")) {
-								m_nerf.mesh_markers.available_meshes.emplace_back(path.filename());
-								m_nerf.mesh_markers.available_meshes_str.append('\0' + path.filename());
-						}
-					}
-					m_nerf.mesh_markers.available_meshes_str.push_back('\0');
-					m_nerf.mesh_markers.available_meshes_str.push_back('\0');
-				}
-			}
-			if (m_nerf.mesh_markers.selected_mesh != 0) {
-				if (ImGui::Button("Insert mesh")) {
-					add_marker(fs::path(m_imgui.meshes_root_dir) / m_nerf.mesh_markers.available_meshes[m_nerf.mesh_markers.selected_mesh-1]);
-				}
-			}
-            if (ImGui::BeginListBox("Meshes")) {
-                for (int i = 0; i < m_nerf.mesh_markers.markers.size(); ++i) {
-                    ImGui::PushID(i);
-                    if (ImGui::Selectable(m_nerf.mesh_markers.markers[i].fs_path.c_str(), m_nerf.mesh_markers.markers[i].selected)) {
-                        if (!m_nerf.mesh_markers.markers[i].selected) {
-                            for (auto &marker: m_nerf.mesh_markers.markers) {
-                                if (marker.selected) {
-                                    marker.selected = false;
-                                    break;
-                                }
-                            }
-                            m_nerf.mesh_markers.markers[i].selected = true;
-                        } else {
-                            m_nerf.mesh_markers.markers[i].selected = false;
-                        }
-                    };
-                    ImGui::PopID();
-                }
-                ImGui::EndListBox();
-            }
-            if (std::any_of(m_nerf.mesh_markers.markers.begin(), m_nerf.mesh_markers.markers.end(), [&](const Testbed::Nerf::Marker& m) { return m.selected; })) {
-				auto iterator = m_nerf.mesh_markers.markers.begin();
-				while (iterator != m_nerf.mesh_markers.markers.end()) {
-					if ((*iterator).selected) {
-						ImGui::ColorEdit3("Instance color", &(iterator->instance_color[0]));
-						break;
-					}
-					++iterator;
-				}
-                if (ImGui::RadioButton("Translate", m_nerf.mesh_markers.guizmo_op == ImGuizmo::TRANSLATE))
-                    m_nerf.mesh_markers.guizmo_op = ImGuizmo::TRANSLATE;
-                ImGui::SameLine();
-                if (ImGui::RadioButton("Rotate", m_nerf.mesh_markers.guizmo_op == ImGuizmo::ROTATE))
-                    m_nerf.mesh_markers.guizmo_op = ImGuizmo::ROTATE;
-                ImGui::SameLine();
-                if (ImGui::RadioButton("Scale", m_nerf.mesh_markers.guizmo_op == ImGuizmo::SCALE))
-                    m_nerf.mesh_markers.guizmo_op = ImGuizmo::SCALE;
-                if (ImGui::Button("Duplicate Marker")) {
-					Testbed::Nerf::Marker new_marker;
-					new_marker.transform[0] = iterator->transform[0];
-					new_marker.transform[1] = iterator->transform[1];
-					new_marker.transform[2] = iterator->transform[2];
-					new_marker.transform[3] = iterator->transform[3];
-					new_marker.bounding_box.min = iterator->bounding_box.min;
-					new_marker.bounding_box.max = iterator->bounding_box.max;
-					new_marker.instance_color = iterator->instance_color;
-				    new_marker.mesh = iterator->mesh;
-				    new_marker.fs_path = iterator->fs_path;
-				    new_marker.selected = true;
-				    iterator->selected = false;
-                    m_nerf.mesh_markers.markers.push_back(new_marker);
-                }
-				ImGui::SameLine();
-                if (imgui_colored_button("Delete Marker", 0.f)) {
-                    auto iterator = m_nerf.mesh_markers.markers.begin();
-                    while (iterator != m_nerf.mesh_markers.markers.end()) {
-                        if ((*iterator).selected) {
-                            m_nerf.mesh_markers.markers.erase(iterator);
-                            break;
-                        }
-                        ++iterator;
-                    }
-                }
-            }
-
-			if (ImGui::TreeNode("Load / save")) {
-				ImGui::InputText("Mesh JSON path", m_imgui.insert_meshes_path, sizeof(m_imgui.insert_meshes_path));
-				if (ImGui::Button("Save meshes")) {
-					save_markers(m_imgui.insert_meshes_path);
-				}
-				if (ImGui::Button("Insert meshes")) {
-					add_markers(m_imgui.insert_meshes_path);
-				}
-            	ImGui::TreePop();
-			}
-
-			if (ImGui::TreeNode("Custom mesh render options")) {
-				ImGui::SliderFloat("Opacity", &m_markers_render_alpha, 0.f, 1.f);
-				ImGui::Checkbox("Render 2D bounding boxes", &m_nerf.mesh_markers.render_bounding_boxes);
-				ImGui::Checkbox("Render 3D bounding boxes", &m_nerf.mesh_markers.render_3d_bounding_boxes);
-				ImGui::Checkbox("Render NeRF overlay", &m_nerf.mesh_markers.render_nerf_overlay);
-				ImGui::Combo("Render mode", (int*)&m_nerf.mesh_markers.render_mode, CustomMeshRenderModeStr);
-				ImGui::InputFloat("Mean marker depth", &m_nerf.mesh_markers.mean_marker_depth, 0.0f, 0.0f, "%.3f", ImGuiInputTextFlags_ReadOnly);
-				ImGui::InputFloat("Mean NeRF depth", &m_nerf.mesh_markers.mean_nerf_depth, 0.0f, 0.0f, "%.3f", ImGuiInputTextFlags_ReadOnly);
-            	ImGui::TreePop();
-			}
-
-			if (ImGui::TreeNode("Alignment optimization")) {
-				if (ImGui::Button("Optimize alignment")) {
-					m_nerf.mesh_markers.optimize_alignment = true;
-					optimise_markers(m_nerf.mesh_markers.marching_cubes.optimization_steps, m_nerf.mesh_markers.marching_cubes.scale, m_nerf.mesh_markers.marching_cubes.thresh, m_nerf.mesh_markers.marching_cubes.res);
-					m_nerf.mesh_markers.optimize_alignment = false;
-				}
-				ImGui::SliderInt("# optimization steps", &m_nerf.mesh_markers.marching_cubes.optimization_steps, 1, 10);
-				ImGui::SliderFloat("Max distance filter threshold", &m_nerf.mesh_markers.marching_cubes.max_distance_filter_threshold, 0.01f, 1.f);
-				ImGui::Checkbox("Render MC bounding boxes", &m_nerf.mesh_markers.marching_cubes.render_bounding_boxes);
-
-				if (ImGui::Button("Preview marching cubes")) {
-					marker_marching_cubes();
-				}
-				ImGui::SliderFloat("Marker MC growth", &m_nerf.mesh_markers.marching_cubes.scale, 1.f, 2.f);
-				ImGui::Combo("MC render mode", (int*)&m_nerf.mesh_markers.marching_cubes.render_mode, "Off\0Vertex Colors\0Vertex Normals\0\0");
-            	ImGui::TreePop();
-			}
-
-            ImGui::TreePop();
-        }
-	}
-
 	if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Checkbox("First person controls", &m_fps_camera);
 		ImGui::SameLine();
@@ -2277,8 +2288,9 @@ void Testbed::draw_visualizations(ImDrawList* list, const mat4x3& camera_matrix)
 
 					auto matrix = mat4(marker.transform);
 
+					bool use_snap = m_nerf.mesh_markers.guizmo_op == ImGuizmo::ROTATE && m_nerf.mesh_markers.use_snap;
 					if (ImGuizmo::Manipulate((const float *) &world2view, (const float *) &view2proj_guizmo,
-										m_nerf.mesh_markers.guizmo_op, ImGuizmo::LOCAL, (float *) &matrix, NULL, NULL)) {
+										m_nerf.mesh_markers.guizmo_op, ImGuizmo::LOCAL, (float *) &matrix, NULL, (float *) (use_snap ? &m_nerf.mesh_markers.snap : NULL))) {
 						marker.transform = matrix;
 					}
 				}
@@ -2313,6 +2325,30 @@ void Testbed::draw_visualizations(ImDrawList* list, const mat4x3& camera_matrix)
 					marker.transform = matrix;
 					if (m_nerf.bounding_box_markers.marching_cubes.run_automatically) single_marker_marching_cubes(marker, 1.0f, m_nerf.mesh_markers.marching_cubes.thresh, m_nerf.mesh_markers.marching_cubes.res);
 				}
+			}
+		}
+
+		if (m_nerf.mesh_markers.edit_insertion_transform) {
+			ImGuiIO &io = ImGui::GetIO();
+			// float flx = focal.x;
+			float fly = focal.y;
+			float zfar = m_ndc_zfar;
+			float znear = m_ndc_znear;
+			mat4 view2proj_guizmo = transpose(mat4{
+				fly * 2.0f / aspect, 0.0f,       0.0f,                            0.0f,
+				0.0f,                -fly * 2.f, 0.0f,                            0.0f,
+				0.0f,                0.0f,       (zfar + znear) / (zfar - znear), -(2.0f * zfar * znear) / (zfar - znear),
+				0.0f,                0.0f,       1.0f,                            0.0f,
+			});
+			ImGuizmo::Enable(true);
+			ImGuizmo::SetID(3);
+			ImGuizmo::SetRect(0, 0, io.DisplaySize.x, io.DisplaySize.y);
+
+			auto matrix = mat4(m_nerf.mesh_markers.insertion_transform);
+
+			if (ImGuizmo::Manipulate((const float *) &world2view, (const float *) &view2proj_guizmo,
+								m_nerf.mesh_markers.insertion_op, ImGuizmo::LOCAL, (float *) &matrix, NULL, NULL)) {
+				m_nerf.mesh_markers.insertion_transform = matrix;
 			}
 		}
 
@@ -3025,7 +3061,7 @@ void draw_marker_mesh(
         return;
     }
 
-    GLuint program = 0, VAO = 0, VBO[3] = {}, vbosize = 0, els = 0, elssize = 0;
+    static GLuint program = 0, VAO = 0, VBO[3] = {}, vbosize = 0, els = 0, elssize = 0;
     if (!VAO) {
         glGenVertexArrays(1, &VAO);
         glBindVertexArray(VAO);

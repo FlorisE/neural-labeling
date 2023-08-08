@@ -1875,8 +1875,6 @@ void Testbed::render_nerf(
 
 	Lens lens = m_nerf.render_with_lens_distortion ? m_nerf.render_lens : Lens{};
 
-	auto resolution = render_buffer.resolution;
-
 	tracer.init_rays_from_camera(
 		render_buffer.spp,
 		nerf_network->padded_output_width(),
@@ -3249,7 +3247,7 @@ void Testbed::add_marker(const fs::path& data_path) {
 
     Testbed::Nerf::Marker marker;
     if (equals_case_insensitive(data_path.extension(), "obj")) {
-        marker.transform = mat4::identity();
+        marker.transform = m_nerf.mesh_markers.insertion_transform;
         marker.mesh = load_obj_complete(data_path);
 
 		vec3 mean_vertice = vec3::zero();

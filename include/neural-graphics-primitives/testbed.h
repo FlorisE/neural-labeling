@@ -853,6 +853,14 @@ public:
 			bool render_bounding_boxes = false;
 			bool render_3d_bounding_boxes = false;
         	ImGuizmo::OPERATION guizmo_op = ImGuizmo::TRANSLATE;
+			mat4x3 insertion_transform = mat4x3{
+				1.0f, 0.0f, 0.0f,
+				0.0f, 1.0f, 0.0f,
+				0.0f, 0.0f, 1.0f,
+				0.5f, 0.5f, 0.5f
+			};
+			bool edit_insertion_transform = false;
+        	ImGuizmo::OPERATION insertion_op = ImGuizmo::TRANSLATE;
 			float mean_marker_depth = 0.0f;
 			float mean_nerf_depth = 0.0f;
 			std::vector<fs::path> available_meshes;
@@ -860,6 +868,8 @@ public:
 			int selected_mesh = 0;
 			bool render_nerf_overlay = false;
 			bool optimize_alignment = false;
+			bool use_snap = false;
+			float snap = 90.0f;
 		} mesh_markers;
 
 		struct BoundingBoxMarkers {
@@ -1344,6 +1354,7 @@ public:
 	void add_bounding_boxes(const fs::path& data_path);
 	void add_markers(const fs::path& data_path);
 	void marker_marching_cubes();
+	void reload_meshes();
 };
 
 }
