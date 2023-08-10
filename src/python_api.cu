@@ -476,6 +476,7 @@ PYBIND11_MODULE(pyngp, m) {
 			"`thresh` is the density threshold; use 0 for SDF; 2.5 works well for NeRF. "
 			"If the aabb parameter specifies an inside-out (\"empty\") box (default), the current render_aabb bounding box is used."
 		)
+		.def("load_markers", &Testbed::add_markers, py::arg("path"))
 		// Interesting members.
 		.def_readwrite("dynamic_res", &Testbed::m_dynamic_res)
 		.def_readwrite("dynamic_res_target_fps", &Testbed::m_dynamic_res_target_fps)
@@ -597,6 +598,20 @@ PYBIND11_MODULE(pyngp, m) {
 		.def("set_rendering_extra_dims_from_training_view", &Testbed::Nerf::set_rendering_extra_dims_from_training_view, "Set the extra dims that are used for rendering to those that were trained for a given training view.")
 		.def("set_rendering_extra_dims", &Testbed::Nerf::set_rendering_extra_dims, "Set the extra dims that are used for rendering.")
 		.def("get_rendering_extra_dims", &Testbed::Nerf::get_rendering_extra_dims_cpu, "Get the extra dims that are currently used for rendering.")
+		;
+
+	py::enum_<ECustomMeshRenderMode>(m, "CustomMeshRenderMode")
+		.value("Shade", ECustomMeshRenderMode::Shade)
+		.value("Normals", ECustomMeshRenderMode::Normals)
+		.value("Depth", ECustomMeshRenderMode::Depth)
+		.value("BinarySegmentation", ECustomMeshRenderMode::BinarySegmentation)
+		.value("InstanceSegmentation", ECustomMeshRenderMode::InstanceSegmentation)
+		.value("None", ECustomMeshRenderMode::None)
+		.export_values();
+
+	py::class_<Testbed::Nerf::MeshMarkers> mesh_markers(nerf, "MeshMarkers");
+	mesh_markers
+		.def_readwrite("render_mode", &Testbed::Nerf::MeshMarkers::render_mode)
 		;
 
 	py::class_<BRDFParams> brdfparams(m, "BRDFParams");
