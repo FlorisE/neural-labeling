@@ -69,11 +69,11 @@ enum class ERenderMode : int {
 	Distortion,
 	Cost,
 	Slice,
-	None,
+	Hidden,
 	NumRenderModes,
 	EncodingVis, // EncodingVis exists outside of the standard render modes
 };
-static constexpr const char* RenderModeStr = "AO\0Shade\0Normals\0Positions\0Depth\0Distortion\0Cost\0Slice\0None\0\0";
+static constexpr const char* RenderModeStr = "AO\0Shade\0Normals\0Positions\0Depth\0Distortion\0Cost\0Slice\0Hidden\0\0";
 
 enum class ECustomMeshRenderMode : int {
 	Shade,
@@ -81,10 +81,10 @@ enum class ECustomMeshRenderMode : int {
 	Normals,
 	BinarySegmentation,
 	InstanceSegmentation,
-	None
+	Hidden
 };
 
-static constexpr const char* CustomMeshRenderModeStr = "Shade\0Depth\0Normals\0BinarySegmentation\0InstanceSegmentation\0None\0\0";
+static constexpr const char* CustomMeshRenderModeStr = "Shade\0Depth\0Normals\0BinarySegmentation\0InstanceSegmentation\0Hidden\0\0";
 
 enum class ERandomMode : int {
 	Random,

@@ -578,6 +578,7 @@ PYBIND11_MODULE(pyngp, m) {
 	py::class_<Testbed::Nerf> nerf(testbed, "Nerf");
 	nerf
 		.def_readonly("training", &Testbed::Nerf::training)
+		.def_readonly("mesh_markers", &Testbed::Nerf::mesh_markers)
 		.def_readwrite("rgb_activation", &Testbed::Nerf::rgb_activation)
 		.def_readwrite("density_activation", &Testbed::Nerf::density_activation)
 		.def_readwrite("sharpen", &Testbed::Nerf::sharpen)
@@ -606,7 +607,7 @@ PYBIND11_MODULE(pyngp, m) {
 		.value("Depth", ECustomMeshRenderMode::Depth)
 		.value("BinarySegmentation", ECustomMeshRenderMode::BinarySegmentation)
 		.value("InstanceSegmentation", ECustomMeshRenderMode::InstanceSegmentation)
-		.value("None", ECustomMeshRenderMode::None)
+		.value("Hidden", ECustomMeshRenderMode::Hidden)
 		.export_values();
 
 	py::class_<Testbed::Nerf::MeshMarkers> mesh_markers(nerf, "MeshMarkers");

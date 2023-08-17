@@ -2272,7 +2272,7 @@ void Testbed::draw_visualizations(ImDrawList* list, const mat4x3& camera_matrix)
 	}
 
 	if (m_testbed_mode == ETestbedMode::Nerf) {
-		if (m_nerf.mesh_markers.render_mode != ECustomMeshRenderMode::None) {
+		if (m_nerf.mesh_markers.render_mode != ECustomMeshRenderMode::Hidden) {
 			for (auto& marker : m_nerf.mesh_markers.markers) {
 				if (marker.selected) {
 					ImGuiIO &io = ImGui::GetIO();
@@ -3404,7 +3404,7 @@ void Testbed::draw_gui() {
 			}
 		};
 
-		if (m_nerf.mesh_markers.render_mode != ECustomMeshRenderMode::None) {
+		if (m_nerf.mesh_markers.render_mode != ECustomMeshRenderMode::Hidden) {
 			list->AddCallback([](const ImDrawList*, const ImDrawCmd* cmd) {
 				(*(decltype(draw_marker)*)cmd->UserCallbackData)();
 				}, &draw_marker);

@@ -690,7 +690,7 @@ __global__ void composite_kernel_nerf(
 		payload.n_steps = j + current_step;
 	}
 
-	if (render_mode != ERenderMode::None) {
+	if (render_mode != ERenderMode::Hidden) {
 		rgba[i] = local_rgba;
 	} else {
 		rgba[i] = vec4(0, 0, 0, local_rgba.a);
