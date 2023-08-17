@@ -870,6 +870,7 @@ public:
 			bool optimize_alignment = false;
 			bool use_snap = false;
 			float snap = 90.0f;
+			bool depth_rgb = false;
 		} mesh_markers;
 
 		struct BoundingBoxMarkers {

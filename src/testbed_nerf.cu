@@ -657,7 +657,7 @@ __global__ void composite_kernel_nerf(
 				} else {
 					continue;
 				}
-			}
+			}	
 		} else if (render_mode == ERenderMode::AO) {
 			rgb = vec3(alpha);
 		}
@@ -673,7 +673,6 @@ __global__ void composite_kernel_nerf(
 			rgb.y = rng.next_float();
 			rgb.z = rng.next_float();
 		}
-
 		local_rgba += vec4(rgb * weight, weight);
 		if (weight > payload.max_weight) {
 			payload.max_weight = weight;
@@ -691,7 +690,11 @@ __global__ void composite_kernel_nerf(
 		payload.n_steps = j + current_step;
 	}
 
-	rgba[i] = local_rgba;
+	if (render_mode != ERenderMode::None) {
+		rgba[i] = local_rgba;
+	} else {
+		rgba[i] = vec4(0, 0, 0, local_rgba.a);
+	}
 	depth[i] = local_depth;
 }
 

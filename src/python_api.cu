@@ -612,6 +612,8 @@ PYBIND11_MODULE(pyngp, m) {
 	py::class_<Testbed::Nerf::MeshMarkers> mesh_markers(nerf, "MeshMarkers");
 	mesh_markers
 		.def_readwrite("render_mode", &Testbed::Nerf::MeshMarkers::render_mode)
+		.def_readwrite("render_nerf_overlay", &Testbed::Nerf::MeshMarkers::render_nerf_overlay)
+		.def_readwrite("depth_rgb", &Testbed::Nerf::MeshMarkers::depth_rgb)
 		;
 
 	py::class_<BRDFParams> brdfparams(m, "BRDFParams");

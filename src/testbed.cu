@@ -1166,8 +1166,12 @@ void Testbed::imgui() {
 				ImGui::Checkbox("Render 3D bounding boxes", &m_nerf.mesh_markers.render_3d_bounding_boxes);
 				ImGui::Checkbox("Render NeRF overlay", &m_nerf.mesh_markers.render_nerf_overlay);
 				ImGui::Combo("Render mode", (int*)&m_nerf.mesh_markers.render_mode, CustomMeshRenderModeStr);
-				ImGui::InputFloat("Mean marker depth", &m_nerf.mesh_markers.mean_marker_depth, 0.0f, 0.0f, "%.3f", ImGuiInputTextFlags_ReadOnly);
-				ImGui::InputFloat("Mean NeRF depth", &m_nerf.mesh_markers.mean_nerf_depth, 0.0f, 0.0f, "%.3f", ImGuiInputTextFlags_ReadOnly);
+
+				if (m_nerf.mesh_markers.render_mode == ECustomMeshRenderMode::Depth) {
+					ImGui::Checkbox("Depth in MM/255 as RGB (otherwise in M/255 as mono)", &m_nerf.mesh_markers.depth_rgb);
+				}
+				//ImGui::InputFloat("Mean marker depth", &m_nerf.mesh_markers.mean_marker_depth, 0.0f, 0.0f, "%.3f", ImGuiInputTextFlags_ReadOnly);
+				//ImGui::InputFloat("Mean NeRF depth", &m_nerf.mesh_markers.mean_nerf_depth, 0.0f, 0.0f, "%.3f", ImGuiInputTextFlags_ReadOnly);
             	ImGui::TreePop();
 			}
 
@@ -2659,6 +2663,7 @@ void Testbed::mouse_drag() {
 	// Middle pressed
 	if (ImGui::GetIO().MouseClicked[2]) {
 		m_drag_depth = get_depth_from_renderbuffer(*m_views.front().render_buffer, mouse / vec2(m_window_res));
+		tlog::info() << "NeRF Depth: " << m_drag_depth;
 	}
 
 	// Middle held
@@ -3055,13 +3060,14 @@ void draw_marker_mesh(
 	const GLuint marker_program,
 	float render_alpha,
 	float znear,
-	float zfar
+	float zfar,
+	bool depth_rgb
 ) {
     if (verts.size() == 0) {
         return;
     }
 
-    static GLuint program = 0, VAO = 0, VBO[3] = {}, vbosize = 0, els = 0, elssize = 0;
+    static GLuint vs = 0, ps = 0, program = 0, VAO = 0, VBO[3] = {}, vbosize = 0, els = 0, elssize = 0;
     if (!VAO) {
         glGenVertexArrays(1, &VAO);
         glBindVertexArray(VAO);
@@ -3103,7 +3109,84 @@ void draw_marker_mesh(
     mat4 world2view = inverse(view2world);
 		
     glBindVertexArray(VAO);
-	program = marker_program;
+
+	if (!program) {
+		vs = compile_shader(false, R"foo(
+	in vec3 pos;
+	in vec3 nor;
+	in vec3 col;
+	out vec3 vtxcol;
+	uniform mat4 camera;
+	uniform mat4 object;
+	uniform vec2 f;
+	uniform ivec2 res;
+	uniform vec2 cen;
+	uniform int mode;
+	uniform bool depth_rgb;
+	void main()
+	{
+		vec4 p = camera * object * vec4(pos, 1.0);
+		p.xy *= vec2(2.0, -2.0) * f.xy / vec2(res.xy);
+		p.w = p.z;
+		p.z = p.z - 0.1;
+		p.xy += cen * p.w;
+		if (mode == 1) {
+			//vtxcol = vec3(p.z / p.w);
+			if (depth_rgb) {
+				int mm = int(p.w * 1000);
+				vtxcol = vec3(float(mm / (256 * 256)) / 256, float(mm / 256) / 256, float(mm % 256) / 256);
+			} else {
+				vtxcol = vec3(p.w);
+			}
+		} else if (mode == 2) {
+			vtxcol = normalize(nor) * 0.5 + vec3(0.5); // visualize vertex normals
+		} else if (mode == 3) {
+			vtxcol = vec3(1.0);
+		} else if (mode == 4) {
+			vtxcol = col;
+		} else {
+			vtxcol = col;
+		}
+		gl_Position = p;
+	}
+	)foo");
+			ps = compile_shader(true, R"foo(
+	out vec4 o;
+	in vec3 vtxcol;
+	uniform int mode;
+	uniform float alpha;
+	uniform float zNear;
+	uniform float zFar;
+	void main() {
+		if (mode != 0) {
+			o = vec4(vtxcol, alpha);
+		} else {
+			o = vec4(vtxcol, alpha);
+		}
+		float z_b = gl_FragCoord.z;
+		float z_n = 2.0 * z_b - 1.0;
+		float z_e = (2.0 * zNear * zFar) / (zFar + zNear - z_n * (zFar - zNear));
+		//float z_e = 2.0 * gl_DepthRange.near * gl_DepthRange.far  / (gl_DepthRange.far  + gl_DepthRange.near - z_n * (gl_DepthRange.far  - gl_DepthRange.near));
+		gl_FragDepth = z_e;
+		//o = vec4(gl_FragDepth + 0.1, gl_FragDepth + 0.1, gl_FragDepth + 0.1, alpha);
+
+		//float ndcDepth = (2.0 * gl_FragCoord.z - gl_DepthRange.near - gl_DepthRange.far) / (gl_DepthRange.far - gl_DepthRange.near);
+		//float clipDepth = ndcDepth / gl_FragCoord.w;
+		//float depth = ((clipDepth + 0.1) * 0.5) + 0.5;
+		//gl_FragDepth = depth;
+		//o = vec4(depth, depth, depth, alpha);
+	}
+	)foo");
+		program = glCreateProgram();
+		glAttachShader(program, vs);
+		glAttachShader(program, ps);
+		glLinkProgram(program);
+		if (!check_shader(program, "shader program", true)) {
+			glDeleteProgram(program);
+			program = 0;
+		}
+	}
+
     glUseProgram(program);
 
     glUniformMatrix4fv(glGetUniformLocation(program, "camera"), 1, GL_FALSE, (GLfloat*)&world2view);
@@ -3115,6 +3198,7 @@ void draw_marker_mesh(
     glUniform2f(glGetUniformLocation(program, "cen"), screen_center.x*2.f-1.f, screen_center.y*-2.f+1.f);
     glUniform2i(glGetUniformLocation(program, "res"), resolution.x, resolution.y);
 	glUniform1i(glGetUniformLocation(program, "mode"), mesh_render_mode);
+	glUniform1i(glGetUniformLocation(program, "depth_rgb"), depth_rgb);
 	if (elssize != 0) {
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, els);
 	}
@@ -3183,7 +3267,6 @@ void Testbed::draw_gui() {
 	glFinish();
 	glViewport(0, 0, display_w, display_h);
 
-
 	ImDrawList* list = ImGui::GetBackgroundDrawList();
 	list->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
 
@@ -3201,68 +3284,6 @@ void Testbed::draw_gui() {
 				(*(decltype(draw_mesh)*)cmd->UserCallbackData)();
 			}, &draw_mesh);
 			list->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
-		}
-
-		if (!marker_program) {
-			marker_vs = compile_shader(false, R"foo(
-	in vec3 pos;
-	in vec3 nor;
-	in vec3 col;
-	out vec3 vtxcol;
-	uniform mat4 camera;
-	uniform mat4 object;
-	uniform vec2 f;
-	uniform ivec2 res;
-	uniform vec2 cen;
-	uniform int mode;
-	void main()
-	{
-		vec4 p = camera * object * vec4(pos, 1.0);
-		p.xy *= vec2(2.0, -2.0) * f.xy / vec2(res.xy);
-		p.w = p.z;
-		p.z = p.z - 0.1;
-		p.xy += cen * p.w;
-		if (mode == 1) {
-			vtxcol = vec3(p.z / p.w);
-		} else if (mode == 2) {
-			vtxcol = normalize(nor) * 0.5 + vec3(0.5); // visualize vertex normals
-		} else if (mode == 3) {
-			vtxcol = vec3(1.0);
-		} else if (mode == 4) {
-			vtxcol = col;
-		} else {
-			vtxcol = col;
-		}
-		gl_Position = p;
-	}
-	)foo");
-			marker_ps = compile_shader(true, R"foo(
-	out vec4 o;
-	in vec3 vtxcol;
-	uniform int mode;
-	uniform float alpha;
-	uniform float zNear;
-	uniform float zFar;
-	void main() {
-		if (mode != 0) {
-			o = vec4(vtxcol, alpha);
-		} else {
-			o = vec4(vtxcol, alpha);
-		}
-		float z_b = gl_FragCoord.z;
-		float z_n = 2.0 * z_b - 1.0;
-		float z_e = 2.0 * zNear * zFar / (zFar + zNear - z_n * (zFar - zNear));
-		gl_FragDepth = z_e;
-	}
-	)foo");
-			marker_program = glCreateProgram();
-			glAttachShader(marker_program, marker_vs);
-			glAttachShader(marker_program, marker_ps);
-			glLinkProgram(marker_program);
-			if (!check_shader(marker_program, "shader program", true)) {
-				glDeleteProgram(marker_program);
-				marker_program = 0;
-			}
 		}
 
 		auto draw_marker = [&]() {		
@@ -3326,7 +3347,8 @@ void Testbed::draw_gui() {
 						marker_program,
 						m_markers_render_alpha,
 						m_ndc_znear,
-						m_ndc_zfar);
+						m_ndc_zfar,
+						m_nerf.mesh_markers.depth_rgb);
 				}
 			}
 
@@ -3359,7 +3381,8 @@ void Testbed::draw_gui() {
 						if (depth[idx] != 1) {
 							//float nerf_pixel_depth = cuda_depth;// * m_nerf.training.dataset.scale;
 							float& marker_pixel_depth = depth[idx];
-							float marker_pixel_depth_scaled = marker_pixel_depth * 1.66; //((marker_pixel_depth * (m_ndc_zfar - m_ndc_znear) + m_ndc_znear) / m_ndc_zfar);// * m_scale;
+							//float marker_pixel_depth_scaled = marker_pixel_depth * 1.66; //((marker_pixel_depth * (m_ndc_zfar - m_ndc_znear) + m_ndc_znear) / m_ndc_zfar);// * m_scale;
+							float marker_pixel_depth_scaled = marker_pixel_depth * 1.66;// * m_scale;
 							if (cuda_depth + 0.05 < marker_pixel_depth_scaled) {
 								//glColor3f(cuda_color.x(), cuda_color.y(), cuda_color.z());
 								glColor3f(0, 0, 0);
