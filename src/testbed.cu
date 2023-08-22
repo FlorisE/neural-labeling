@@ -795,6 +795,79 @@ void Testbed::imgui() {
 		ImGui::Text("Directory where meshes are loaded from and written to:");
 		ImGui::InputText("Meshes root directory", m_imgui.meshes_root_dir, sizeof(m_imgui.meshes_root_dir));
 
+		if (ImGui::TreeNode("Load / save")) {
+			ImGui::InputText("Labels JSON path", m_imgui.insert_labels_path, sizeof(m_imgui.insert_labels_path));
+			if (ImGui::Button("Load")) {
+				load_labels(m_imgui.insert_labels_path);
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Save")) {
+			    save_labels(m_imgui.insert_labels_path);
+			}
+			ImGui::TreePop();
+		}
+		
+		if (ImGui::TreeNode("Views and origin")) {
+			if (ImGui::Button("+X")) {
+				set_view_dir(m_nerf.mesh_markers.labeling_origin[0]);
+				set_look_at(m_nerf.mesh_markers.labeling_origin[3]);
+				set_scale(m_nerf.view_navigator.camera_distance);
+				reset_accumulation();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("-X")) {
+				set_view_dir(-m_nerf.mesh_markers.labeling_origin[0]);
+				set_look_at(m_nerf.mesh_markers.labeling_origin[3]);
+				set_scale(m_nerf.view_navigator.camera_distance);
+				reset_accumulation();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("+Y")) {
+				set_view_dir(m_nerf.mesh_markers.labeling_origin[1]);
+				set_look_at(m_nerf.mesh_markers.labeling_origin[3]);
+				set_scale(m_nerf.view_navigator.camera_distance);
+				reset_accumulation();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("-Y")) {
+				set_view_dir(-m_nerf.mesh_markers.labeling_origin[1]);
+				set_look_at(m_nerf.mesh_markers.labeling_origin[3]);
+				set_scale(m_nerf.view_navigator.camera_distance);
+				reset_accumulation();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("+Z")) {
+				set_view_dir(m_nerf.mesh_markers.labeling_origin[2]);
+				set_look_at(m_nerf.mesh_markers.labeling_origin[3]);
+				set_scale(m_nerf.view_navigator.camera_distance);
+				reset_accumulation();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("-Z")) {
+				set_view_dir(-m_nerf.mesh_markers.labeling_origin[2]);
+				set_look_at(m_nerf.mesh_markers.labeling_origin[3]);
+				set_scale(m_nerf.view_navigator.camera_distance);
+				reset_accumulation();
+			}
+			ImGui::SliderFloat("Distance", &m_nerf.view_navigator.camera_distance, 0.0f, 2.0f);
+
+			ImGui::Checkbox("Show labeling origin", &m_nerf.mesh_markers.show_labeling_origin);
+			if (ImGui::TreeNode("Manipulate labeling origin")) {
+				m_nerf.mesh_markers.edit_labeling_origin = true;
+                if (ImGui::RadioButton("Translate", m_nerf.mesh_markers.labeling_origin_op == ImGuizmo::TRANSLATE))
+                    m_nerf.mesh_markers.labeling_origin_op = ImGuizmo::TRANSLATE;
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Rotate", m_nerf.mesh_markers.labeling_origin_op == ImGuizmo::ROTATE))
+                    m_nerf.mesh_markers.labeling_origin_op = ImGuizmo::ROTATE;
+
+            	ImGui::TreePop();
+			} else {
+				m_nerf.mesh_markers.edit_labeling_origin = false;
+			}
+
+			ImGui::TreePop();
+		}
+
 		if (ImGui::TreeNode("Measuring")) {
 			ImGui::Checkbox("Render", &m_nerf.measure.render);
 			ImGui::Checkbox("Measure start", &m_nerf.measure.record_start);
@@ -825,7 +898,7 @@ void Testbed::imgui() {
 				mat4 transform = mat4::identity();
 				vec4 middle(0.5, 0.5, 0.5, 1.0);
 				transform[3] = middle;
-				add_bb_marker(m_imgui.insert_bounding_box_path, transform);
+				add_bb_marker(m_imgui.insert_bounding_box_path, m_nerf.mesh_markers.labeling_origin);
 				memset(m_imgui.insert_bounding_box_path, 0, sizeof(m_imgui.insert_bounding_box_path));
 				auto& bb_marker = m_nerf.bounding_box_markers.markers.back();
 				for (auto &marker: m_nerf.bounding_box_markers.markers) {
@@ -1034,17 +1107,6 @@ void Testbed::imgui() {
 				}
 			}
 
-			if (ImGui::TreeNode("Load / save")) {
-				ImGui::InputText("Bounding box JSON path", m_imgui.insert_bounding_boxes_path, sizeof(m_imgui.insert_bounding_boxes_path));
-				if (ImGui::Button("Save bounding boxes")) {
-					save_bounding_boxes(m_imgui.insert_bounding_boxes_path);
-				}
-				if (ImGui::Button("Insert bounding boxes")) {
-					add_bounding_boxes(m_imgui.insert_bounding_boxes_path);
-				}
-            	ImGui::TreePop();
-			}
-
 			if (ImGui::TreeNode("Render options")) {
 				ImGui::Combo("MC render mode", (int*)&m_nerf.bounding_box_markers.marching_cubes.render_mode, "Off\0Vertex Colors\0Vertex Normals\0\0");
 				ImGui::Combo("Bounding box render mode", (int*)&m_nerf.bounding_box_markers.render_mode, "Off\0Selected\0All\0\0");
@@ -1134,31 +1196,6 @@ void Testbed::imgui() {
                     }
                 }
             }
-
-			if (ImGui::TreeNode("Load / save")) {
-				ImGui::InputText("Mesh JSON path", m_imgui.insert_meshes_path, sizeof(m_imgui.insert_meshes_path));
-				if (ImGui::Button("Save meshes")) {
-					save_markers(m_imgui.insert_meshes_path);
-				}
-				if (ImGui::Button("Insert meshes")) {
-					add_markers(m_imgui.insert_meshes_path);
-				}
-            	ImGui::TreePop();
-			}
-
-
-			if (ImGui::TreeNode("Insertion options")) {
-				m_nerf.mesh_markers.edit_insertion_transform = true;
-                if (ImGui::RadioButton("Translate", m_nerf.mesh_markers.insertion_op == ImGuizmo::TRANSLATE))
-                    m_nerf.mesh_markers.insertion_op = ImGuizmo::TRANSLATE;
-                ImGui::SameLine();
-                if (ImGui::RadioButton("Rotate", m_nerf.mesh_markers.insertion_op == ImGuizmo::ROTATE))
-                    m_nerf.mesh_markers.insertion_op = ImGuizmo::ROTATE;
-
-            	ImGui::TreePop();
-			} else {
-				m_nerf.mesh_markers.edit_insertion_transform = false;
-			}
 
 			if (ImGui::TreeNode("Render options")) {
 				ImGui::SliderFloat("Opacity", &m_markers_render_alpha, 0.f, 1.f);
@@ -1672,9 +1709,9 @@ void Testbed::imgui() {
 			accum_reset |= ImGui::Checkbox("Snap to pixel centers", &m_snap_to_pixel_centers);
 
 
-			ImGui::Checkbox("Terminate depth at density threshold", &m_dex_nerf);
-			if (m_dex_nerf) {
-				ImGui::SliderFloat("Sigma threshold", &m_sigma_thrsh, 0.0f, 100.0f);
+			ImGui::Checkbox("Terminate depth at density threshold", &m_nerf.dex);
+			if (m_nerf.dex) {
+				ImGui::SliderFloat("Sigma threshold", &m_nerf.sigma_thrsh, 0.0f, 100.0f);
 			}
 
 			ImGui::TreePop();
@@ -2168,6 +2205,15 @@ void Testbed::imgui() {
 	ImGui::End();
 }
 
+void Testbed::visualize_labeling_origin(ImDrawList* list, const mat4& world2proj, float aspect) {
+	const float axis_size = 0.025f;
+	const vec3* xforms = (const vec3*)&m_nerf.mesh_markers.labeling_origin;
+	vec3 pos = xforms[3];
+	add_debug_line(list, world2proj, pos, pos+axis_size*xforms[0], 0xff4040ff, 1.0f);
+	add_debug_line(list, world2proj, pos, pos+axis_size*xforms[1], 0xff40ff40, 1.0f);
+	add_debug_line(list, world2proj, pos, pos+axis_size*xforms[2], 0xffff4040, 1.0f);
+}
+
 void Testbed::visualize_nerf_cameras(ImDrawList* list, const mat4& world2proj) {
 	for (int i = 0; i < m_nerf.training.n_images_for_training; ++i) {
 		auto res = m_nerf.training.dataset.metadata[i].resolution;
@@ -2206,6 +2252,10 @@ void Testbed::draw_visualizations(ImDrawList* list, const mat4x3& camera_matrix)
 	if (m_testbed_mode == ETestbedMode::Nerf) {
 		if (m_nerf.visualize_cameras) {
 			visualize_nerf_cameras(list, world2proj);
+		}
+
+		if (m_nerf.mesh_markers.show_labeling_origin) {
+			visualize_labeling_origin(list, world2proj, aspect);
 		}
 	}
 
@@ -2259,6 +2309,8 @@ void Testbed::draw_visualizations(ImDrawList* list, const mat4x3& camera_matrix)
 				m_camera[3] += rel[3].xyz();
 
 				m_up_dir = mat3(rel) * m_up_dir;
+
+				m_nerf.view_navigator.accumulated_world_transform *= rel;
 			} else {
 				m_render_aabb_to_local = transpose(mat3(matrix));
 				vec3 new_cen = m_render_aabb_to_local * matrix[3].xyz();
@@ -2332,7 +2384,7 @@ void Testbed::draw_visualizations(ImDrawList* list, const mat4x3& camera_matrix)
 			}
 		}
 
-		if (m_nerf.mesh_markers.edit_insertion_transform) {
+		if (m_nerf.mesh_markers.edit_labeling_origin) {
 			ImGuiIO &io = ImGui::GetIO();
 			// float flx = focal.x;
 			float fly = focal.y;
@@ -2348,11 +2400,11 @@ void Testbed::draw_visualizations(ImDrawList* list, const mat4x3& camera_matrix)
 			ImGuizmo::SetID(3);
 			ImGuizmo::SetRect(0, 0, io.DisplaySize.x, io.DisplaySize.y);
 
-			auto matrix = mat4(m_nerf.mesh_markers.insertion_transform);
+			auto matrix = mat4(m_nerf.mesh_markers.labeling_origin);
 
 			if (ImGuizmo::Manipulate((const float *) &world2view, (const float *) &view2proj_guizmo,
-								m_nerf.mesh_markers.insertion_op, ImGuizmo::LOCAL, (float *) &matrix, NULL, NULL)) {
-				m_nerf.mesh_markers.insertion_transform = matrix;
+								m_nerf.mesh_markers.labeling_origin_op, ImGuizmo::LOCAL, (float *) &matrix, NULL, NULL)) {
+				m_nerf.mesh_markers.labeling_origin = matrix;
 			}
 		}
 

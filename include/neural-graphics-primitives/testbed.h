@@ -359,6 +359,7 @@ public:
 		CudaRenderBuffer& render_buffer,
 		bool to_srgb = true
 	);
+	void visualize_labeling_origin(ImDrawList* list, const mat4& world2proj, float aspect);
 	void visualize_nerf_cameras(ImDrawList* list, const mat4& world2proj);
 	fs::path find_network_config(const fs::path& network_config_path);
 	nlohmann::json load_network_config(const fs::path& network_config_path);
@@ -555,8 +556,6 @@ public:
 
 	// Rendering stuff
 	ivec2 m_window_res = ivec2(0);
-	bool m_dex_nerf=true;
-	float m_sigma_thrsh = 15.0f;
 	bool m_dynamic_res = true;
 	float m_dynamic_res_target_fps = 20.0f;
 	int m_fixed_res_factor = 8;
@@ -782,6 +781,9 @@ public:
 		void set_rendering_extra_dims(const std::vector<float>& vals);
 		std::vector<float> get_rendering_extra_dims_cpu() const;
 
+		bool dex=true;
+		float sigma_thrsh = 15.0f;
+
         struct Marker {
 			Marker() {};
 			Marker(const mat3& rot, const vec3& pos, const std::string& _fs_path) {
@@ -853,14 +855,15 @@ public:
 			bool render_bounding_boxes = false;
 			bool render_3d_bounding_boxes = false;
         	ImGuizmo::OPERATION guizmo_op = ImGuizmo::TRANSLATE;
-			mat4x3 insertion_transform = mat4x3{
+			mat4x3 labeling_origin = mat4x3{
 				1.0f, 0.0f, 0.0f,
 				0.0f, 1.0f, 0.0f,
 				0.0f, 0.0f, 1.0f,
 				0.5f, 0.5f, 0.5f
 			};
-			bool edit_insertion_transform = false;
-        	ImGuizmo::OPERATION insertion_op = ImGuizmo::TRANSLATE;
+			bool edit_labeling_origin = false;
+			bool show_labeling_origin = false;
+        	ImGuizmo::OPERATION labeling_origin_op = ImGuizmo::TRANSLATE;
 			float mean_marker_depth = 0.0f;
 			float mean_nerf_depth = 0.0f;
 			std::vector<fs::path> available_meshes;
@@ -886,6 +889,11 @@ public:
 		} bounding_box_markers;
 
 		std::string meshes_root_dir = "meshes";
+
+		struct ViewNavigator {
+			float camera_distance = 1.0f;
+			mat4 accumulated_world_transform = mat4::identity();
+		} view_navigator;
 
 		struct Measure {
 			bool render = true;
@@ -1079,8 +1087,7 @@ public:
 		char mesh_path[MAX_PATH_LEN] = "base.obj";
 		char insert_bounding_box_path[MAX_PATH_LEN] = "";
 		char meshes_root_dir[MAX_PATH_LEN] = "meshes";
-        char insert_meshes_path[MAX_PATH_LEN] = "meshes.json";
-        char insert_bounding_boxes_path[MAX_PATH_LEN] = "bounding_boxes.json";
+        char insert_labels_path[MAX_PATH_LEN] = "labels.json";
 		char snapshot_path[MAX_PATH_LEN] = "base.ingp";
 		char video_path[MAX_PATH_LEN] = "video.mp4";
 	} m_imgui;
@@ -1345,15 +1352,13 @@ public:
 	void marker_density_and_marching_cubes(const Testbed::Nerf::Marker& marker, std::vector<vec3>& out_verts, std::vector<vec3>& out_colors, std::vector<uint32_t>& out_indices, std::vector<vec3>& out_normals, ivec3& res3d, int& n_vertices, float scale, float thresh, uint32_t res);
 	void render_mc_bounding_boxes(ImDrawList* list, const mat4 world2proj, const Testbed::Nerf::Marker& marker);
 	void render_mesh_extraction_bounding_boxes(ImDrawList* list, const mat4& world2proj, const Testbed::Nerf::Marker& marker);
-	void add_bb_marker(const fs::path& data_path, const mat4& transform = mat4::identity(), const vec3& a = vec3(-0.05f, -0.05f, -0.05f), const vec3& b = vec3(0.05f, 0.05f, 0.05f));
+	void add_bb_marker(const fs::path& data_path, const mat4x3& transform = mat4::identity(), const vec3& a = vec3(-0.05f, -0.05f, -0.05f), const vec3& b = vec3(0.05f, 0.05f, 0.05f));
 	void bounding_box_marching_cubes();
 	void shrink_bounding_boxes(cudaStream_t stream);
-	void save_bounding_boxes(const fs::path& data_path);
-	void save_markers(const fs::path& data_path);
+	void save_labels(const fs::path& data_path);
+	void load_labels(const fs::path& data_path);
 	void optimise_markers(uint32_t n_steps, float scale, float thresh, int res);
 	void add_marker(const fs::path& data_path);
-	void add_bounding_boxes(const fs::path& data_path);
-	void add_markers(const fs::path& data_path);
 	void marker_marching_cubes();
 	void reload_meshes();
 };

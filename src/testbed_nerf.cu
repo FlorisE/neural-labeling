@@ -1928,8 +1928,8 @@ void Testbed::render_nerf(
 			render_mode,
 			camera_matrix1,
 			depth_scale,
-			m_sigma_thrsh,
-			m_dex_nerf,
+			m_nerf.sigma_thrsh,
+			m_nerf.dex,
 			m_visualized_layer,
 			visualized_dimension,
 			m_nerf.rgb_activation,
@@ -2266,8 +2266,12 @@ void Testbed::load_nerf(const fs::path& data_path) {
 					json_paths.emplace_back(path);
 				}
 			}
+			std::string temp = data_path.filename() + ".json";
+			strcpy(m_imgui.insert_labels_path, temp.c_str());
 		} else if (equals_case_insensitive(data_path.extension(), "json")) {
 			json_paths.emplace_back(data_path);
+			std::string temp = data_path.filename();
+			strcpy(m_imgui.insert_labels_path, temp.c_str());
 		} else {
 			throw std::runtime_error{"NeRF data path must either be a json file or a directory containing json files."};
 		}
@@ -2324,12 +2328,13 @@ void Testbed::shrink_bounding_boxes(cudaStream_t stream) {
 	}
 }
 
-void Testbed::save_bounding_boxes(const fs::path& data_path) {
+void Testbed::save_labels(const fs::path& data_path) {
 	if (data_path.empty()) {
-		throw std::runtime_error{"Cannot save NeRF data to an empty path."};
+		throw std::runtime_error{"Cannot save label data to an empty path."};
 	}
 	nlohmann::json j = {
 		{"bounding_boxes", nlohmann::json::array()},
+		{"markers", nlohmann::json::array()},
 	};
 
 	for (auto& marker : m_nerf.bounding_box_markers.markers) {
@@ -2350,22 +2355,9 @@ void Testbed::save_bounding_boxes(const fs::path& data_path) {
 		j["bounding_boxes"].push_back(marker_json);
 	}
 
-	std::ofstream f(native_string(data_path));
-	f << j;
-}
-
-void Testbed::save_markers(const fs::path& data_path) {
-	if (data_path.empty()) {
-		throw std::runtime_error{"Cannot save NeRF data to an empty path."};
-	}
-	nlohmann::json j = {
-		{"markers", nlohmann::json::array()},
-	};
-
 	for (auto& marker : m_nerf.mesh_markers.markers) {
 		nlohmann::json marker_json = {};
 		marker_json["file_path"] = marker.fs_path;
-		//marker_json["selected"] = marker.selected;
 		marker_json["instance_color"] = marker.instance_color;
 		std::vector<nlohmann::json> rows;
 		for (int i = 0; i < 3; ++i) {
@@ -2377,6 +2369,32 @@ void Testbed::save_markers(const fs::path& data_path) {
 		}
 		marker_json["transform_matrix"] = rows;
 		j["markers"].push_back(marker_json);
+	}
+
+	{
+		std::vector<nlohmann::json> transform_rows;
+		for (int i = 0; i < 3; ++i) {
+			nlohmann::json col = nlohmann::json::array();
+			for (int j = 0; j < 4; ++j) {
+				col.push_back(m_nerf.mesh_markers.labeling_origin[j][i]);
+			}
+			transform_rows.push_back(col);
+		}
+
+		j["labeling_origin"] = transform_rows;
+	}
+
+	{
+		std::vector<nlohmann::json> transform_rows;
+		for (int i = 0; i < 3; ++i) {
+			nlohmann::json col = nlohmann::json::array();
+			for (int j = 0; j < 4; ++j) {
+				col.push_back(m_nerf.view_navigator.accumulated_world_transform[j][i]);
+			}
+			transform_rows.push_back(col);
+		}
+
+		j["accumulated_world_transform"] = transform_rows;
 	}
 
 	std::ofstream f(native_string(data_path));
@@ -3250,7 +3268,7 @@ void Testbed::add_marker(const fs::path& data_path) {
 
     Testbed::Nerf::Marker marker;
     if (equals_case_insensitive(data_path.extension(), "obj")) {
-        marker.transform = m_nerf.mesh_markers.insertion_transform;
+        marker.transform = m_nerf.mesh_markers.labeling_origin;
         marker.mesh = load_obj_complete(data_path);
 
 		vec3 mean_vertice = vec3::zero();
@@ -3270,16 +3288,21 @@ void Testbed::add_marker(const fs::path& data_path) {
     m_nerf.mesh_markers.markers.push_back(marker);
 }
 
-void Testbed::add_bounding_boxes(const fs::path& data_path) {
+void Testbed::load_labels(const fs::path& data_path) {
 	if (data_path.empty()) {
-		throw std::runtime_error{"Cannot load NeRF data from an empty path."};
+		tlog::error() << "Could not load label configuration from an empty path";
+		return;
 	}
 	tlog::info() << "Loading bounding boxes from '" << data_path << "'";
 
 	std::ifstream infile(native_string(data_path));
-	nlohmann::json bounding_boxes = nlohmann::json::parse(infile, nullptr, true, true);
-	if (bounding_boxes.contains("bounding_boxes")) {
-		for (auto&& bounding_box : bounding_boxes["bounding_boxes"]) {
+	if (!infile.is_open()) {
+		tlog::error() << "Could not load label configuration.";
+		return;
+	}
+	nlohmann::json labels = nlohmann::json::parse(infile, nullptr, true, true);
+	if (labels.contains("bounding_boxes")) {
+		for (auto&& bounding_box : labels["bounding_boxes"]) {
 			nlohmann::json& jsonmatrix_start = bounding_box["transform_matrix"];
 			mat4 transform = mat4::identity();
 			for (int i = 0; i < 3; ++i) {
@@ -3307,18 +3330,9 @@ void Testbed::add_bounding_boxes(const fs::path& data_path) {
 			}
 		}
 	}
-}
 
-void Testbed::add_markers(const fs::path& data_path) {
-	if (data_path.empty()) {
-		throw std::runtime_error{"Cannot load NeRF data from an empty path."};
-	}
-	tlog::info() << "Loading meshes from '" << data_path << "'";
-
-	std::ifstream infile(native_string(data_path));
-	nlohmann::json markers = nlohmann::json::parse(infile, nullptr, true, true);
-	if (markers.contains("markers")) {
-		for (auto&& marker : markers["markers"]) {
+	if (labels.contains("markers")) {
+		for (auto&& marker : labels["markers"]) {
 			add_marker(fs::path(m_nerf.meshes_root_dir) / marker["file_path"]);
 			Testbed::Nerf::Marker& m = m_nerf.mesh_markers.markers.back();
 			nlohmann::json& jsonmatrix_start = marker["transform_matrix"];
@@ -3336,9 +3350,36 @@ void Testbed::add_markers(const fs::path& data_path) {
 			}
 		}
 	}
+
+	if (labels.contains("labeling_origin")) {
+		nlohmann::json& jsonmatrix_start = labels["labeling_origin"];
+		for (int i = 0; i < 3; ++i) {
+			for (int j = 0; j < 4; ++j) {
+				float val = float(jsonmatrix_start[i][j]);
+				m_nerf.mesh_markers.labeling_origin[j][i] = val;
+			}
+		}
+	}
+
+	if (labels.contains("accumulated_world_transform")) {
+		nlohmann::json& jsonmatrix_start = labels["accumulated_world_transform"];
+		mat4x3 matrix;
+		for (int i = 0; i < 3; ++i) {
+			for (int j = 0; j < 4; ++j) {
+				float val = float(jsonmatrix_start[i][j]);
+				matrix[j][i] = val;
+			}
+		}
+		// m_camera = mat3(matrix) * m_camera;
+		// m_camera[3] += matrix[3].xyz();
+
+		// m_up_dir = mat3(matrix) * m_up_dir;
+
+		m_nerf.view_navigator.accumulated_world_transform = matrix;
+	}
 }
 
-void Testbed::add_bb_marker(const fs::path& data_path, const mat4& transform, const vec3& a, const vec3& b) {
+void Testbed::add_bb_marker(const fs::path& data_path, const mat4x3& transform, const vec3& a, const vec3& b) {
 	Testbed::Nerf::Marker bb_marker;
 	bb_marker.transform = transform;
 	bb_marker.fs_path = data_path.str();

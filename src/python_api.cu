@@ -289,6 +289,7 @@ PYBIND11_MODULE(pyngp, m) {
 		.value("Distortion", ERenderMode::Distortion)
 		.value("Cost", ERenderMode::Cost)
 		.value("Slice", ERenderMode::Slice)
+		.value("Hidden", ERenderMode::Hidden)
 		.export_values();
 
 	py::enum_<ERandomMode>(m, "RandomMode")
@@ -476,7 +477,7 @@ PYBIND11_MODULE(pyngp, m) {
 			"`thresh` is the density threshold; use 0 for SDF; 2.5 works well for NeRF. "
 			"If the aabb parameter specifies an inside-out (\"empty\") box (default), the current render_aabb bounding box is used."
 		)
-		.def("load_markers", &Testbed::add_markers, py::arg("path"))
+		.def("load_labels", &Testbed::load_labels, py::arg("path"))
 		// Interesting members.
 		.def_readwrite("dynamic_res", &Testbed::m_dynamic_res)
 		.def_readwrite("dynamic_res_target_fps", &Testbed::m_dynamic_res_target_fps)
@@ -581,6 +582,8 @@ PYBIND11_MODULE(pyngp, m) {
 		.def_readonly("mesh_markers", &Testbed::Nerf::mesh_markers)
 		.def_readwrite("rgb_activation", &Testbed::Nerf::rgb_activation)
 		.def_readwrite("density_activation", &Testbed::Nerf::density_activation)
+		.def_readwrite("dex", &Testbed::Nerf::dex)
+		.def_readwrite("sigma_thrsh", &Testbed::Nerf::sigma_thrsh)
 		.def_readwrite("sharpen", &Testbed::Nerf::sharpen)
 		// Legacy member: lens used to be called "camera_distortion"
 		.def_readwrite("render_with_camera_distortion", &Testbed::Nerf::render_with_lens_distortion)
