@@ -1910,7 +1910,7 @@ void Testbed::render_nerf(
 		stream
 	);
 
-	float depth_scale = 1.0f / m_nerf.training.dataset.scale;
+	float depth_scale = m_nerf.base_depth_scale / m_nerf.training.dataset.scale;
 	bool render_2d = m_render_mode == ERenderMode::Slice || m_render_mode == ERenderMode::Distortion;
 
 	uint32_t n_hit;

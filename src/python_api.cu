@@ -584,6 +584,7 @@ PYBIND11_MODULE(pyngp, m) {
 		.def_readwrite("density_activation", &Testbed::Nerf::density_activation)
 		.def_readwrite("dex", &Testbed::Nerf::dex)
 		.def_readwrite("sigma_thrsh", &Testbed::Nerf::sigma_thrsh)
+		.def_readwrite("base_depth_scale", &Testbed::Nerf::base_depth_scale)
 		.def_readwrite("sharpen", &Testbed::Nerf::sharpen)
 		// Legacy member: lens used to be called "camera_distortion"
 		.def_readwrite("render_with_camera_distortion", &Testbed::Nerf::render_with_lens_distortion)

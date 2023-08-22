@@ -784,6 +784,8 @@ public:
 		bool dex=true;
 		float sigma_thrsh = 15.0f;
 
+		float base_depth_scale = 1.0f;
+
         struct Marker {
 			Marker() {};
 			Marker(const mat3& rot, const vec3& pos, const std::string& _fs_path) {
