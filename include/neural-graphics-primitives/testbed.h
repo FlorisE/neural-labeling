@@ -41,6 +41,7 @@
 #endif
 
 #include <thread>
+#include <random>
 
 struct GLFWwindow;
 
@@ -186,6 +187,7 @@ public:
 			const uint8_t* grid,
 			ERenderMode render_mode,
 			const mat4x3 &camera_matrix,
+			const vec3& background_color,
 			float depth_scale,
 			float m_sigma_thrsh,
 			bool m_dex_nerf,
@@ -359,7 +361,6 @@ public:
 		CudaRenderBuffer& render_buffer,
 		bool to_srgb = true
 	);
-	void visualize_labeling_origin(ImDrawList* list, const mat4& world2proj, float aspect);
 	void visualize_nerf_cameras(ImDrawList* list, const mat4& world2proj);
 	fs::path find_network_config(const fs::path& network_config_path);
 	nlohmann::json load_network_config(const fs::path& network_config_path);
@@ -451,6 +452,15 @@ public:
 	size_t n_params();
 	size_t first_encoder_param();
 	size_t n_encoding_params();
+
+	struct BoundingBox2D {
+		float maxminx = 0;
+		float maxminy = 0;
+		float minmaxx = 0;
+		float minmaxy = 0;
+		vec3 color;
+		std::string fs_path;
+	};
 
 #ifdef NGP_PYTHON
 	pybind11::dict compute_marching_cubes_mesh(ivec3 res3d = ivec3(128), BoundingBox aabb = BoundingBox{vec3(0.0f), vec3(1.0f)}, float thresh=2.5f);
@@ -785,6 +795,14 @@ public:
 		float sigma_thrsh = 15.0f;
 
 		float base_depth_scale = 1.0f;
+	} m_nerf;
+
+	struct Labeling {
+		struct Category {
+			std::string name;
+			vec3 color = {1.f, 1.f, 1.f};
+		};
+		std::vector<std::shared_ptr<Category>> categories;
 
         struct Marker {
 			Marker() {};
@@ -799,6 +817,7 @@ public:
             mat4x3 transform = mat4x3::identity();
 			vec3 instance_color = {1.f, 1.f, 1.f};
 			ngp::BoundingBox bounding_box = ngp::BoundingBox();
+			//std::unique_ptr<ngp::BoundingBox> affordance = nullptr;
 			std::vector<vec3> mc_verts;
 			std::vector<vec3> mc_normals;
 			std::vector<vec3> mc_colors;
@@ -807,6 +826,8 @@ public:
             Mesh mesh;
             std::string fs_path;
             bool selected = false;
+			bool hidden = false;
+			std::shared_ptr<Category> category = nullptr;
 
 			void update_bounding_box() {
 				if (mesh.verts.size() == 0)
@@ -842,7 +863,20 @@ public:
 			}
         };
 
-		struct MeshMarkers {
+		struct ViewNavigator {
+			float camera_distance = 1.0f;
+			mat4 accumulated_world_transform = mat4::identity();
+		} view_navigator;
+
+		struct Markers {
+        	std::vector<Marker> markers;
+        	ImGuizmo::OPERATION guizmo_op = ImGuizmo::TRANSLATE;
+			ESelectableRenderMode origin_render_mode = ESelectableRenderMode::All;
+			float origin_size = 0.025f;
+			float bounding_box_thickness = 1.0f;
+		};
+
+		struct MeshMarkers : Markers {
 			struct MarchingCubes {
 				EMeshRenderMode render_mode = EMeshRenderMode::VertexColors;
 				bool render_bounding_boxes = false;
@@ -852,11 +886,10 @@ public:
 				float thresh = 2.5f;
 				int res = 256;
 			} marching_cubes;
-        	std::vector<Marker> markers;
 			ECustomMeshRenderMode render_mode = ECustomMeshRenderMode::Shade;
 			bool render_bounding_boxes = false;
 			bool render_3d_bounding_boxes = false;
-        	ImGuizmo::OPERATION guizmo_op = ImGuizmo::TRANSLATE;
+			ImGuizmo::MODE guizmo_mode = ImGuizmo::WORLD;
 			mat4x3 labeling_origin = mat4x3{
 				1.0f, 0.0f, 0.0f,
 				0.0f, 1.0f, 0.0f,
@@ -865,6 +898,7 @@ public:
 			};
 			bool edit_labeling_origin = false;
 			bool show_labeling_origin = false;
+			float labeling_origin_size = 0.025f;
         	ImGuizmo::OPERATION labeling_origin_op = ImGuizmo::TRANSLATE;
 			float mean_marker_depth = 0.0f;
 			float mean_nerf_depth = 0.0f;
@@ -872,30 +906,23 @@ public:
 			std::string available_meshes_str = "None";
 			int selected_mesh = 0;
 			bool render_nerf_overlay = false;
+			float nerf_overlay_scale = 1.6f;
+			float nerf_overlay_offset = 0.05f;
 			bool optimize_alignment = false;
 			bool use_snap = false;
 			float snap = 90.0f;
 			bool depth_rgb = false;
 		} mesh_markers;
 
-		struct BoundingBoxMarkers {
+		struct BoundingBoxMarkers : Markers {
 			struct MarchingCubes {
 				EMeshRenderMode render_mode = EMeshRenderMode::VertexColors;
 				float thresh = 2.5f;
 				int res = 256;
 				bool run_automatically = true;
 			} marching_cubes;
-			std::vector<Marker> markers;
-			EBoundingBoxRenderMode render_mode = EBoundingBoxRenderMode::All;
-        	ImGuizmo::OPERATION guizmo_op = ImGuizmo::TRANSLATE;
+			ESelectableRenderMode render_mode = ESelectableRenderMode::All;
 		} bounding_box_markers;
-
-		std::string meshes_root_dir = "meshes";
-
-		struct ViewNavigator {
-			float camera_distance = 1.0f;
-			mat4 accumulated_world_transform = mat4::identity();
-		} view_navigator;
 
 		struct Measure {
 			bool render = true;
@@ -906,7 +933,10 @@ public:
 			vec3 color = vec3::ones();
 			float thickness = 1.0f;
 		} measure;
-	} m_nerf;
+
+		std::string meshes_root_dir = "meshes";
+
+	} m_labeling;
 
 	struct Sdf {
 		float shadow_sharpness = 2048.0f;
@@ -1349,20 +1379,24 @@ public:
 
 	std::shared_ptr<NerfNetwork<network_precision_t>> m_nerf_network;
 
-	void render_3d_bounding_boxes(ImDrawList* list, const mat4& world2proj, const Testbed::Nerf::Marker& marker);
-	void single_marker_marching_cubes(Testbed::Nerf::Marker& marker, float scale, float thresh, uint32_t res);
-	void marker_density_and_marching_cubes(const Testbed::Nerf::Marker& marker, std::vector<vec3>& out_verts, std::vector<vec3>& out_colors, std::vector<uint32_t>& out_indices, std::vector<vec3>& out_normals, ivec3& res3d, int& n_vertices, float scale, float thresh, uint32_t res);
-	void render_mc_bounding_boxes(ImDrawList* list, const mat4 world2proj, const Testbed::Nerf::Marker& marker);
-	void render_mesh_extraction_bounding_boxes(ImDrawList* list, const mat4& world2proj, const Testbed::Nerf::Marker& marker);
+	Testbed::BoundingBox2D calculate_marker_bounding_box(const Testbed::Labeling::Marker& marker, const ivec2& res, const vec2& center, const vec2& focal_length, const mat4& world2view, cudaStream_t stream);
+	std::vector<Testbed::BoundingBox2D> calculate_marker_bounding_boxes(int display_w, int display_h, cudaStream_t stream);
+	void render_3d_bounding_boxes(ImDrawList* list, const mat4& world2proj, const Testbed::Labeling::Marker& marker, float thickness);
+	void render_coordinate_frame(ImDrawList* list, const mat4& world2proj, const mat4x3& transform, float frame_size);
+	void single_marker_marching_cubes(Testbed::Labeling::Marker& marker, float scale, float thresh, uint32_t res);
+	void marker_density_and_marching_cubes(const Testbed::Labeling::Marker& marker, std::vector<vec3>& out_verts, std::vector<vec3>& out_colors, std::vector<uint32_t>& out_indices, std::vector<vec3>& out_normals, ivec3& res3d, int& n_vertices, float scale, float thresh, uint32_t res);
+	void render_mc_bounding_boxes(ImDrawList* list, const mat4 world2proj, const Testbed::Labeling::Marker& marker, float thickness);
+	void render_mesh_extraction_bounding_boxes(ImDrawList* list, const mat4& world2proj, const Testbed::Labeling::Marker& marker, float thickness);
 	void add_bb_marker(const fs::path& data_path, const mat4x3& transform = mat4::identity(), const vec3& a = vec3(-0.05f, -0.05f, -0.05f), const vec3& b = vec3(0.05f, 0.05f, 0.05f));
 	void bounding_box_marching_cubes();
 	void shrink_bounding_boxes(cudaStream_t stream);
 	void save_labels(const fs::path& data_path);
 	void load_labels(const fs::path& data_path);
 	void optimise_markers(uint32_t n_steps, float scale, float thresh, int res);
-	void add_marker(const fs::path& data_path);
+	void add_marker(const fs::path& data_path, bool select);
 	void marker_marching_cubes();
 	void reload_meshes();
+	void assign_or_add_category(Testbed::Labeling::Marker& marker, const std::string& cat_name);
 };
 
 }

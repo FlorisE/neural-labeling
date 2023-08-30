@@ -47,7 +47,7 @@ enum class EMeshRenderMode : int {
 	FaceIDs,
 };
 
-enum class EBoundingBoxRenderMode : int {
+enum class ESelectableRenderMode : int {
 	Off,
 	Selected,
 	All
@@ -81,10 +81,11 @@ enum class ECustomMeshRenderMode : int {
 	Normals,
 	BinarySegmentation,
 	InstanceSegmentation,
+	CategorySegmentation,
 	Hidden
 };
 
-static constexpr const char* CustomMeshRenderModeStr = "Shade\0Depth\0Normals\0BinarySegmentation\0InstanceSegmentation\0Hidden\0\0";
+static constexpr const char* CustomMeshRenderModeStr = "Shade\0Depth\0Normals\0BinarySegmentation\0InstanceSegmentation\0CategorySegmentation\0Hidden\0\0";
 
 enum class ERandomMode : int {
 	Random,

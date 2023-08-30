@@ -277,7 +277,7 @@ void add_debug_line(ImDrawList* list, const mat4& proj, vec3 a, vec3 b, uint32_t
 	}
 }
 
-void visualize_cube(ImDrawList* list, const mat4& world2proj, const vec3& a, const vec3& b, const mat3& render_aabb_to_local) {
+void visualize_cube(ImDrawList* list, const mat4& world2proj, const vec3& a, const vec3& b, const mat3& render_aabb_to_local, float thickness) {
 	mat3 m = transpose(render_aabb_to_local);
 	add_debug_line(list, world2proj, m * vec3{a.x, a.y, a.z}, m * vec3{a.x, a.y, b.z}, 0xffff4040); // Z
 	add_debug_line(list, world2proj, m * vec3{b.x, a.y, a.z}, m * vec3{b.x, a.y, b.z}, 0xffffffff);

@@ -138,7 +138,7 @@ struct CameraPath {
 
 #ifdef NGP_GUI
 void add_debug_line(ImDrawList* list, const mat4&proj, vec3 a, vec3 b, uint32_t col = 0xffffffff, float thickness = 1.0f);
-void visualize_cube(ImDrawList* list, const mat4& world2proj, const vec3& a, const vec3& b, const mat3& render_aabb_to_local);
+void visualize_cube(ImDrawList* list, const mat4& world2proj, const vec3& a, const vec3& b, const mat3& render_aabb_to_local, float thickness = 1.0f);
 void visualize_nerf_camera(ImDrawList* list, const mat4& world2proj, const mat4x3& xform, float aspect, uint32_t col = 0x80ffffff, float thickness = 1.0f);
 #endif
 

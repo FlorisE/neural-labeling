@@ -579,7 +579,6 @@ PYBIND11_MODULE(pyngp, m) {
 	py::class_<Testbed::Nerf> nerf(testbed, "Nerf");
 	nerf
 		.def_readonly("training", &Testbed::Nerf::training)
-		.def_readonly("mesh_markers", &Testbed::Nerf::mesh_markers)
 		.def_readwrite("rgb_activation", &Testbed::Nerf::rgb_activation)
 		.def_readwrite("density_activation", &Testbed::Nerf::density_activation)
 		.def_readwrite("dex", &Testbed::Nerf::dex)
@@ -611,15 +610,9 @@ PYBIND11_MODULE(pyngp, m) {
 		.value("Depth", ECustomMeshRenderMode::Depth)
 		.value("BinarySegmentation", ECustomMeshRenderMode::BinarySegmentation)
 		.value("InstanceSegmentation", ECustomMeshRenderMode::InstanceSegmentation)
+		.value("CategorySegmentation", ECustomMeshRenderMode::CategorySegmentation)
 		.value("Hidden", ECustomMeshRenderMode::Hidden)
 		.export_values();
-
-	py::class_<Testbed::Nerf::MeshMarkers> mesh_markers(nerf, "MeshMarkers");
-	mesh_markers
-		.def_readwrite("render_mode", &Testbed::Nerf::MeshMarkers::render_mode)
-		.def_readwrite("render_nerf_overlay", &Testbed::Nerf::MeshMarkers::render_nerf_overlay)
-		.def_readwrite("depth_rgb", &Testbed::Nerf::MeshMarkers::depth_rgb)
-		;
 
 	py::class_<BRDFParams> brdfparams(m, "BRDFParams");
 	brdfparams
@@ -715,6 +708,18 @@ PYBIND11_MODULE(pyngp, m) {
 			py::arg("depth_scale")=1.0f,
 			"set one of the training images. must be a floating point numpy array of (H,W,C) with 4 channels; linear color space; W and H must match image size of the rest of the dataset"
 		)
+		;
+
+	py::class_<Testbed::Labeling> labeling(testbed, "Labeling");
+	labeling
+		.def_readonly("mesh_markers", &Testbed::Nerf::mesh_markers)
+		;
+
+	py::class_<Testbed::Labeling::MeshMarkers> mesh_markers(labeling, "MeshMarkers");
+	mesh_markers
+		.def_readwrite("render_mode", &Testbed::Labeling::MeshMarkers::render_mode)
+		.def_readwrite("render_nerf_overlay", &Testbed::Labeling::MeshMarkers::render_nerf_overlay)
+		.def_readwrite("depth_rgb", &Testbed::Labeling::MeshMarkers::depth_rgb)
 		;
 
 	py::class_<Testbed::Sdf> sdf(testbed, "Sdf");
