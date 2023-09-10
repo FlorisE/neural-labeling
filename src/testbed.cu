@@ -985,7 +985,11 @@ void Testbed::imgui() {
 							new_marker.mesh.verts.push_back(iterator->mc_verts[i] - bb_marker.transform[3]);
 						}
 						new_marker.fs_path = iterator->fs_path;
+						
+						assign_or_add_category(new_marker, new_marker.fs_path);
+
 						m_labeling.mesh_markers.markers.push_back(new_marker);
+						save_mesh_cpu(new_marker.mc_verts, new_marker.mc_normals, new_marker.mc_colors, new_marker.mc_indices, fs::path(m_imgui.meshes_root_dir) / fs::path(new_marker.fs_path).with_extension("obj"), m_mesh.unwrap, m_nerf.training.dataset.scale, m_nerf.training.dataset.offset);
 					}
 
 					if (ImGui::BeginPopupModal("Rename bounding box", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -1222,6 +1226,37 @@ void Testbed::imgui() {
 					}
 				}
 				ImGui::Checkbox("Hidden", &marker.hidden);
+	
+				if (ImGui::TreeNode("Affordance")) {
+					ImGui::Checkbox("Translate affordance instead of marker", &m_labeling.mesh_markers.translate_affordance_instead_of_marker);
+
+					if (marker.affordance != nullptr) {
+						if (imgui_colored_button("Delete", 0.f)) {
+							marker.affordance = nullptr;
+						}
+						if (marker.affordance != nullptr) {
+							auto& translation = marker.affordance->transform[3];
+							auto& bounding_box = marker.affordance->bounding_box;
+
+							vec3 diag = bounding_box.diag();
+							bool edit_diag = false;
+							edit_diag |= ImGui::SliderFloat("Size x", ((float*)&diag)+0, 0.001f, marker.bounding_box.max[0] - marker.bounding_box.min[0] - 2 * abs(translation[0]), "%.3f");
+							edit_diag |= ImGui::SliderFloat("Size y", ((float*)&diag)+1, 0.001f, marker.bounding_box.max[1] - marker.bounding_box.min[1] - 2 * abs(translation[1]), "%.3f");
+							edit_diag |= ImGui::SliderFloat("Size z", ((float*)&diag)+2, 0.001f, marker.bounding_box.max[2] - marker.bounding_box.min[2] - 2 * abs(translation[2]), "%.3f");
+							
+							if (edit_diag) {
+								vec3 cen = bounding_box.center();
+								bounding_box = BoundingBox(cen - diag * 0.5f, cen + diag * 0.5f);
+							}
+						}
+					} else {
+						if (ImGui::Button("Add")) {
+							marker.affordance = std::make_shared<ngp::Testbed::Labeling::Marker::Affordance>(marker.bounding_box.min, marker.bounding_box.max);
+						}
+					}
+					ImGui::TreePop();
+				}
+
                 if (ImGui::Button("Duplicate Marker")) {
 					Testbed::Labeling::Marker new_marker;
 					new_marker.transform[0] = marker.transform[0];
@@ -1248,6 +1283,7 @@ void Testbed::imgui() {
 				ImGui::SliderFloat("Opacity", &m_markers_render_alpha, 0.f, 1.f);
 				ImGui::Checkbox("Render 2D bounding boxes", &m_labeling.mesh_markers.render_bounding_boxes);
 				ImGui::Checkbox("Render 3D bounding boxes", &m_labeling.mesh_markers.render_3d_bounding_boxes);
+				ImGui::Checkbox("Render affordances", &m_labeling.mesh_markers.render_affordances);
 				ImGui::SliderFloat("Bounding box thickness", &m_labeling.mesh_markers.bounding_box_thickness, 0.1f, 10.f);
 				ImGui::Checkbox("Render NeRF overlay", &m_labeling.mesh_markers.render_nerf_overlay);
 				if (m_labeling.mesh_markers.render_nerf_overlay) {
@@ -1286,37 +1322,6 @@ void Testbed::imgui() {
 
             ImGui::TreePop();
         }
-	
-		if (ImGui::TreeNode("Affordances")) {
-			// if (ImGui::BeginListBox("Meshes")) {
-            //     for (int i = 0; i < m_labeling.mesh_markers.available_meshes.size(); ++i) {
-            //         ImGui::PushID(i);
-            //         if (ImGui::Selectable(m_labeling.mesh_markers.available_meshes[i].str().c_str(), m_labeling.mesh_markers.markers[i].selected)) {
-            //             if (!m_labeling.mesh_markers.markers[i].selected) {
-            //                 for (auto &marker: m_labeling.mesh_markers.markers) {
-            //                     if (marker.selected) {
-            //                         marker.selected = false;
-            //                         break;
-            //                     }
-            //                 }
-            //                 m_labeling.mesh_markers.markers[i].selected = true;
-            //             } else {
-            //                 m_labeling.mesh_markers.markers[i].selected = false;
-            //             }
-            //         };
-            //         ImGui::PopID();
-            //     }
-            //     ImGui::EndListBox();
-            // }
-
-			//ImGui::Combo("Meshes", &m_labeling.mesh_markers.selected_mesh, m_labeling.mesh_markers.available_meshes_str.c_str());
-			ImGui::SameLine();
-			if (ImGui::Button("Reload")) {
-				reload_meshes();
-			}
-
-			ImGui::TreePop();
-		}
 	}
 	ImGui::End();
 
@@ -2418,12 +2423,43 @@ void Testbed::draw_visualizations(ImDrawList* list, const mat4x3& camera_matrix)
 					ImGuizmo::SetID(1);
 					ImGuizmo::SetRect(0, 0, io.DisplaySize.x, io.DisplaySize.y);
 
-					auto matrix = mat4(marker.transform);
+					if (!m_labeling.mesh_markers.translate_affordance_instead_of_marker) {
+						auto matrix = mat4(marker.transform);
 
-					bool use_snap = m_labeling.mesh_markers.guizmo_op == ImGuizmo::ROTATE && m_labeling.mesh_markers.use_snap;
-					if (ImGuizmo::Manipulate((const float *) &world2view, (const float *) &view2proj_guizmo,
-										m_labeling.mesh_markers.guizmo_op, m_labeling.mesh_markers.guizmo_mode, (float *) &matrix, NULL, (float *) (use_snap ? &m_labeling.mesh_markers.snap : NULL))) {
-						marker.transform = matrix;
+						bool use_snap = m_labeling.mesh_markers.guizmo_op == ImGuizmo::ROTATE && m_labeling.mesh_markers.use_snap;
+						if (ImGuizmo::Manipulate((const float *) &world2view, (const float *) &view2proj_guizmo,
+											m_labeling.mesh_markers.guizmo_op, m_labeling.mesh_markers.guizmo_mode, (float *) &matrix, NULL, (float *) (use_snap ? &m_labeling.mesh_markers.snap : NULL))) {
+							marker.transform = matrix;
+						}
+					} else if (marker.affordance != nullptr) {
+						mat4 matrix = mat4::identity();
+						matrix = mat3(marker.transform) * mat3(marker.affordance->transform);
+						matrix[3] = marker.transform[3] + marker.affordance->transform[3];
+						mat4 deltaMatrix = mat4::zero();
+						if (ImGuizmo::Manipulate((const float *) &world2view, (const float *) &view2proj_guizmo, ImGuizmo::OPERATION::TRANSLATE, ImGuizmo::MODE::WORLD, (float *) &matrix, (float *) &deltaMatrix, NULL)) {
+							mat3 affordance_rotation = matrix;
+							vec3 affordance_translation = matrix[3];
+							auto translated_affordance_min = affordance_translation + affordance_rotation * marker.affordance->bounding_box.min;
+							auto translated_affordance_max = affordance_translation + affordance_rotation * marker.affordance->bounding_box.max;
+
+							mat3 marker_rotation = marker.transform;
+							vec3 marker_translation = marker.transform[3];
+							auto translated_marker_min = marker_translation + marker_rotation * marker.bounding_box.min;
+							auto translated_marker_max = marker_translation + marker_rotation * marker.bounding_box.max;
+
+							if (translated_affordance_min[0] >= translated_marker_min[0] &&
+							    translated_affordance_min[1] >= translated_marker_min[1] &&
+								translated_affordance_min[2] >= translated_marker_min[2] &&
+								translated_affordance_max[0] <= translated_marker_max[0] &&
+								translated_affordance_max[1] <= translated_marker_max[1] &&
+								translated_affordance_max[2] <= translated_marker_max[2])
+							{
+								vec3 translation = marker.affordance->transform[3] + vec3(deltaMatrix[3]);
+								mat3 rotation = mat3(marker.affordance->transform) * mat3(deltaMatrix);
+ 								marker.affordance->transform = rotation;
+								marker.affordance->transform[3] = translation;
+							}
+						}
 					}
 				}
 			}
@@ -2496,6 +2532,22 @@ void Testbed::draw_visualizations(ImDrawList* list, const mat4x3& camera_matrix)
 				}
 				if (m_labeling.mesh_markers.render_3d_bounding_boxes) {
 					render_3d_bounding_boxes(list, world2proj, marker, m_labeling.mesh_markers.bounding_box_thickness);
+				}
+				if (m_labeling.mesh_markers.render_affordances && marker.affordance != nullptr) {
+					auto& bbox = marker.affordance->bounding_box;
+
+					mat3 rotation = mat3(marker.transform) * mat3(marker.affordance->transform);
+					vec3 translation = marker.transform[3] + marker.affordance->transform[3];
+					mat4x3 pose = rotation;
+					pose[3] = translation;
+
+					render_3d_bounding_box(list,
+										   world2proj,
+										   pose,
+										   ImColor(1.0f, 1.0f, 1.0f, 1.0f),
+										   bbox.min,
+										   bbox.max,
+										   m_labeling.mesh_markers.bounding_box_thickness);
 				}
 				if (m_labeling.mesh_markers.origin_render_mode == ESelectableRenderMode::All || 
 					(m_labeling.mesh_markers.origin_render_mode == ESelectableRenderMode::Selected && marker.selected)) 

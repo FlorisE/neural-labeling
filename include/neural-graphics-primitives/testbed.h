@@ -814,10 +814,20 @@ public:
 				fs_path = _fs_path;
 			}
 
+			struct Affordance {
+				Affordance() {};
+				Affordance(const vec3& min, const vec3& max) {
+					bounding_box.min = min;
+					bounding_box.max = max;
+				}
+				ngp::BoundingBox bounding_box;
+				mat4x3 transform = mat3::identity();
+			};
+
             mat4x3 transform = mat4x3::identity();
 			vec3 instance_color = {1.f, 1.f, 1.f};
 			ngp::BoundingBox bounding_box = ngp::BoundingBox();
-			//std::unique_ptr<ngp::BoundingBox> affordance = nullptr;
+			std::shared_ptr<ngp::Testbed::Labeling::Marker::Affordance> affordance = nullptr;
 			std::vector<vec3> mc_verts;
 			std::vector<vec3> mc_normals;
 			std::vector<vec3> mc_colors;
@@ -871,7 +881,7 @@ public:
 		struct Markers {
         	std::vector<Marker> markers;
         	ImGuizmo::OPERATION guizmo_op = ImGuizmo::TRANSLATE;
-			ESelectableRenderMode origin_render_mode = ESelectableRenderMode::All;
+			ESelectableRenderMode origin_render_mode = ESelectableRenderMode::Off;
 			float origin_size = 0.025f;
 			float bounding_box_thickness = 1.0f;
 		};
@@ -889,6 +899,8 @@ public:
 			ECustomMeshRenderMode render_mode = ECustomMeshRenderMode::Shade;
 			bool render_bounding_boxes = false;
 			bool render_3d_bounding_boxes = false;
+			bool render_affordances = false;
+			bool translate_affordance_instead_of_marker = false;
 			ImGuizmo::MODE guizmo_mode = ImGuizmo::WORLD;
 			mat4x3 labeling_origin = mat4x3{
 				1.0f, 0.0f, 0.0f,
@@ -1381,6 +1393,7 @@ public:
 
 	Testbed::BoundingBox2D calculate_marker_bounding_box(const Testbed::Labeling::Marker& marker, const ivec2& res, const vec2& center, const vec2& focal_length, const mat4& world2view, cudaStream_t stream);
 	std::vector<Testbed::BoundingBox2D> calculate_marker_bounding_boxes(int display_w, int display_h, cudaStream_t stream);
+	void render_3d_bounding_box(ImDrawList* list, const mat4& world2proj, const mat4x3& world2model, const ImColor& color, const vec3& min, const vec3& max, float thickness);
 	void render_3d_bounding_boxes(ImDrawList* list, const mat4& world2proj, const Testbed::Labeling::Marker& marker, float thickness);
 	void render_coordinate_frame(ImDrawList* list, const mat4& world2proj, const mat4x3& transform, float frame_size);
 	void single_marker_marching_cubes(Testbed::Labeling::Marker& marker, float scale, float thresh, uint32_t res);

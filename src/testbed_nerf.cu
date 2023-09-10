@@ -3503,11 +3503,9 @@ void Testbed::render_coordinate_frame(ImDrawList* list, const mat4& world2proj, 
 	add_debug_line(list, world2proj, pos, pos+frame_size*xforms[2], 0xffff4040, thickness);
 }
 
-void Testbed::render_3d_bounding_boxes(ImDrawList* list, const mat4& world2proj, const Testbed::Labeling::Marker& marker, float thickness) {
-	const mat4x3& world2model = marker.transform;
-	const vec3 a = marker.bounding_box.min + transpose(mat3(world2model)) * vec3(world2model[3]);
-	const vec3 b = marker.bounding_box.max + transpose(mat3(world2model)) * vec3(world2model[3]);
-	const ImColor color(marker.instance_color[0], marker.instance_color[1], marker.instance_color[2], 1.0f);
+void Testbed::render_3d_bounding_box(ImDrawList* list, const mat4& world2proj, const mat4x3& world2model, const ImColor& color, const vec3& min, const vec3& max, float thickness) {
+	const vec3 a = min + transpose(mat3(world2model)) * vec3(world2model[3]);
+	const vec3 b = max + transpose(mat3(world2model)) * vec3(world2model[3]);
 	const mat3 R = mat3(world2model);
 
 	add_debug_line(list, world2proj, R * vec3{a.x, a.y, a.z}, R * vec3{a.x, a.y, b.z}, color, thickness); // Z
@@ -3524,6 +3522,13 @@ void Testbed::render_3d_bounding_boxes(ImDrawList* list, const mat4& world2proj,
 	add_debug_line(list, world2proj, R * vec3{b.x, a.y, a.z}, R * vec3{b.x, b.y, a.z}, color, thickness);
 	add_debug_line(list, world2proj, R * vec3{a.x, a.y, b.z}, R * vec3{a.x, b.y, b.z}, color, thickness);
 	add_debug_line(list, world2proj, R * vec3{b.x, a.y, b.z}, R * vec3{b.x, b.y, b.z}, color, thickness);
+}
+
+void Testbed::render_3d_bounding_boxes(ImDrawList* list, const mat4& world2proj, const Testbed::Labeling::Marker& marker, float thickness) {
+	const vec3 a = marker.bounding_box.min + transpose(mat3(marker.transform)) * vec3(marker.transform[3]);
+	const vec3 b = marker.bounding_box.max + transpose(mat3(marker.transform)) * vec3(marker.transform[3]);
+	const ImColor color(marker.instance_color[0], marker.instance_color[1], marker.instance_color[2], 1.0f);
+	render_3d_bounding_box(list, world2proj, marker.transform, color, marker.bounding_box.min, marker.bounding_box.max, thickness);
 }
 
 void Testbed::render_mesh_extraction_bounding_boxes(ImDrawList* list, const mat4& world2proj, const Testbed::Labeling::Marker& marker, float thickness) {

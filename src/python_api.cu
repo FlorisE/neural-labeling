@@ -712,7 +712,8 @@ PYBIND11_MODULE(pyngp, m) {
 
 	py::class_<Testbed::Labeling> labeling(testbed, "Labeling");
 	labeling
-		.def_readonly("mesh_markers", &Testbed::Nerf::mesh_markers)
+		.def_readonly("mesh_markers", &Testbed::Labeling::mesh_markers)
+		.def_readonly("categories", &Testbed::Labeling::categories)
 		;
 
 	py::class_<Testbed::Labeling::MeshMarkers> mesh_markers(labeling, "MeshMarkers");
@@ -720,6 +721,12 @@ PYBIND11_MODULE(pyngp, m) {
 		.def_readwrite("render_mode", &Testbed::Labeling::MeshMarkers::render_mode)
 		.def_readwrite("render_nerf_overlay", &Testbed::Labeling::MeshMarkers::render_nerf_overlay)
 		.def_readwrite("depth_rgb", &Testbed::Labeling::MeshMarkers::depth_rgb)
+		;
+
+	py::class_<Testbed::Labeling::Category> category(labeling, "Category");
+	category
+		.def_readwrite("name", &Testbed::Labeling::Category::name)
+		.def_readwrite("color", &Testbed::Labeling::Category::color)
 		;
 
 	py::class_<Testbed::Sdf> sdf(testbed, "Sdf");
