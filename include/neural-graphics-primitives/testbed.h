@@ -459,7 +459,7 @@ public:
 		float minmaxx = 0;
 		float minmaxy = 0;
 		vec3 color;
-		std::string fs_path;
+		//std::string fs_path;
 	};
 
 #ifdef NGP_PYTHON
@@ -804,6 +804,11 @@ public:
 		};
 		std::vector<std::shared_ptr<Category>> categories;
 
+		struct BoundingBox2D {
+			vec2 min;
+			vec2 max;
+		};
+
         struct Marker {
 			Marker() {};
 			Marker(const mat3& rot, const vec3& pos, const std::string& _fs_path) {
@@ -823,7 +828,8 @@ public:
 				ngp::BoundingBox bounding_box;
 				mat4x3 transform = mat3::identity();
 			};
-
+			
+			BoundingBox2D bounding_box_2d;
             mat4x3 transform = mat4x3::identity();
 			vec3 instance_color = {1.f, 1.f, 1.f};
 			ngp::BoundingBox bounding_box = ngp::BoundingBox();
@@ -888,7 +894,7 @@ public:
 
 		struct MeshMarkers : Markers {
 			struct MarchingCubes {
-				EMeshRenderMode render_mode = EMeshRenderMode::VertexColors;
+				EMeshRenderMode render_mode = EMeshRenderMode::VertexNormals;
 				bool render_bounding_boxes = false;
 				float scale = 1.1f;
 				int optimization_steps = 1;
@@ -896,7 +902,7 @@ public:
 				float thresh = 2.5f;
 				int res = 256;
 			} marching_cubes;
-			ECustomMeshRenderMode render_mode = ECustomMeshRenderMode::Shade;
+			ECustomMeshRenderMode render_mode = ECustomMeshRenderMode::Normals;
 			bool render_bounding_boxes = false;
 			bool render_3d_bounding_boxes = false;
 			bool render_affordances = false;
@@ -928,7 +934,7 @@ public:
 
 		struct BoundingBoxMarkers : Markers {
 			struct MarchingCubes {
-				EMeshRenderMode render_mode = EMeshRenderMode::VertexColors;
+				EMeshRenderMode render_mode = EMeshRenderMode::VertexNormals;
 				float thresh = 2.5f;
 				int res = 256;
 				bool run_automatically = true;

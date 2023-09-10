@@ -531,6 +531,7 @@ PYBIND11_MODULE(pyngp, m) {
 		.def_property_readonly("loss", [](py::object& obj) { return obj.cast<Testbed&>().m_loss_scalar.val(); })
 		.def_readonly("training_step", &Testbed::m_training_step)
 		.def_readonly("nerf", &Testbed::m_nerf)
+		.def_readonly("labeling", &Testbed::m_labeling)
 		.def_readonly("sdf", &Testbed::m_sdf)
 		.def_readonly("image", &Testbed::m_image)
 		.def_readwrite("camera_smoothing", &Testbed::m_camera_smoothing)
@@ -721,12 +722,27 @@ PYBIND11_MODULE(pyngp, m) {
 		.def_readwrite("render_mode", &Testbed::Labeling::MeshMarkers::render_mode)
 		.def_readwrite("render_nerf_overlay", &Testbed::Labeling::MeshMarkers::render_nerf_overlay)
 		.def_readwrite("depth_rgb", &Testbed::Labeling::MeshMarkers::depth_rgb)
+		.def_readonly("markers", &Testbed::Labeling::MeshMarkers::markers)
 		;
 
 	py::class_<Testbed::Labeling::Category> category(labeling, "Category");
 	category
 		.def_readwrite("name", &Testbed::Labeling::Category::name)
 		.def_readwrite("color", &Testbed::Labeling::Category::color)
+		;
+
+	py::class_<Testbed::Labeling::Marker> marker(labeling, "Marker");
+	marker
+		.def_readonly("instance_color", &Testbed::Labeling::Marker::instance_color)
+		.def_readonly("fs_path", &Testbed::Labeling::Marker::fs_path)
+		.def_readonly("category", &Testbed::Labeling::Marker::category)
+		.def_readonly("bounding_box_2d", &Testbed::Labeling::Marker::bounding_box_2d)
+		;
+
+	py::class_<Testbed::Labeling::BoundingBox2D> bounding_box_2d(labeling, "BoundingBox2D");
+	bounding_box_2d
+		.def_readonly("min", &Testbed::Labeling::BoundingBox2D::min)
+		.def_readonly("max", &Testbed::Labeling::BoundingBox2D::max)
 		;
 
 	py::class_<Testbed::Sdf> sdf(testbed, "Sdf");

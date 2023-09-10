@@ -3384,7 +3384,7 @@ Testbed::BoundingBox2D Testbed::calculate_marker_bounding_box(
 	boundingBox.minmaxx = std::min(res.x, maxx);
 	boundingBox.minmaxy = std::min(res.y, maxy);
 	boundingBox.color = marker.instance_color;
-	boundingBox.fs_path = marker.fs_path;
+	//boundingBox.fs_path = marker.fs_path;
 
 	return boundingBox;
 }
@@ -3403,6 +3403,8 @@ std::vector<Testbed::BoundingBox2D> Testbed::calculate_marker_bounding_boxes(int
 	for (auto& marker : m_labeling.mesh_markers.markers) {
 		if (marker.mesh.verts.size() != 0) {
 			BoundingBox2D boundingBox = calculate_marker_bounding_box(marker, res, center, focal_length, world2view, stream);
+			marker.bounding_box_2d.min = {boundingBox.maxminx, boundingBox.maxminy};
+			marker.bounding_box_2d.max = {boundingBox.minmaxx, boundingBox.minmaxy};
 			result.push_back(boundingBox);
 		}
 	}
