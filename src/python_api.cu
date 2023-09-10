@@ -720,6 +720,7 @@ PYBIND11_MODULE(pyngp, m) {
 	py::class_<Testbed::Labeling::MeshMarkers> mesh_markers(labeling, "MeshMarkers");
 	mesh_markers
 		.def_readwrite("render_mode", &Testbed::Labeling::MeshMarkers::render_mode)
+		.def_readwrite("render_bounding_boxes", &Testbed::Labeling::MeshMarkers::render_bounding_boxes)
 		.def_readwrite("render_nerf_overlay", &Testbed::Labeling::MeshMarkers::render_nerf_overlay)
 		.def_readwrite("depth_rgb", &Testbed::Labeling::MeshMarkers::depth_rgb)
 		.def_readonly("markers", &Testbed::Labeling::MeshMarkers::markers)
