@@ -46,12 +46,22 @@ enum class EMeshRenderMode : int {
 	VertexNormals,
 	FaceIDs,
 };
+static constexpr const char* MeshRenderModeStr = "Off\0Vertex Colors\0Vertex Normals\0\0";
+
+enum class EPlaneCullingMode : int {
+	Off,
+	XY,
+	XZ,
+	YZ,
+};
+static constexpr const char* PlaneCullingModeStr = "Off\0XY\0XZ\0YZ\0\0";
 
 enum class ESelectableRenderMode : int {
 	Off,
 	Selected,
 	All
 };
+static constexpr const char* SelectableRenderModeStr = "Off\0Selected\0All\0\0";
 
 enum class EGroundTruthRenderMode : int {
 	Shade,
@@ -82,10 +92,11 @@ enum class ECustomMeshRenderMode : int {
 	BinarySegmentation,
 	InstanceSegmentation,
 	CategorySegmentation,
+	Affordances,
 	Hidden
 };
 
-static constexpr const char* CustomMeshRenderModeStr = "Shade\0Depth\0Normals\0BinarySegmentation\0InstanceSegmentation\0CategorySegmentation\0Hidden\0\0";
+static constexpr const char* CustomMeshRenderModeStr = "Shade\0Depth\0Normals\0BinarySegmentation\0InstanceSegmentation\0CategorySegmentation\0Affordances\0Hidden\0\0";
 
 enum class ERandomMode : int {
 	Random,

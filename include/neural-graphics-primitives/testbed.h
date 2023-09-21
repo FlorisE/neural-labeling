@@ -840,7 +840,7 @@ public:
 			std::vector<uint32_t> mc_indices;
 			int mc_num_vertices = 0;
             Mesh mesh;
-            std::string fs_path;
+            fs::path fs_path;
             bool selected = false;
 			bool hidden = false;
 			std::shared_ptr<Category> category = nullptr;
@@ -905,8 +905,10 @@ public:
 			ECustomMeshRenderMode render_mode = ECustomMeshRenderMode::Normals;
 			bool render_bounding_boxes = false;
 			bool render_3d_bounding_boxes = false;
-			bool render_affordances = false;
+			bool render_affordances = true;
 			bool translate_affordance_instead_of_marker = false;
+			ImGuizmo::MODE affordance_guizmo_mode = ImGuizmo::WORLD;
+        	ImGuizmo::OPERATION affordance_guizmo_op = ImGuizmo::TRANSLATE;
 			ImGuizmo::MODE guizmo_mode = ImGuizmo::WORLD;
 			mat4x3 labeling_origin = mat4x3{
 				1.0f, 0.0f, 0.0f,
@@ -924,7 +926,7 @@ public:
 			std::string available_meshes_str = "None";
 			int selected_mesh = 0;
 			bool render_nerf_overlay = false;
-			float nerf_overlay_scale = 1.6f;
+			//float nerf_overlay_scale = 1.6f;
 			float nerf_overlay_offset = 0.05f;
 			bool optimize_alignment = false;
 			bool use_snap = false;
@@ -940,6 +942,7 @@ public:
 				bool run_automatically = true;
 			} marching_cubes;
 			ESelectableRenderMode render_mode = ESelectableRenderMode::All;
+			EPlaneCullingMode plane_culling_mode = EPlaneCullingMode::Off;
 		} bounding_box_markers;
 
 		struct Measure {
@@ -1412,7 +1415,7 @@ public:
 	void save_labels(const fs::path& data_path);
 	void load_labels(const fs::path& data_path);
 	void optimise_markers(uint32_t n_steps, float scale, float thresh, int res);
-	void add_marker(const fs::path& data_path, bool select);
+	void add_marker(const fs::path& data_path, bool select, bool center);
 	void marker_marching_cubes();
 	void reload_meshes();
 	void assign_or_add_category(Testbed::Labeling::Marker& marker, const std::string& cat_name);

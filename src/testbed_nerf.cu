@@ -2343,7 +2343,7 @@ void Testbed::save_labels(const fs::path& data_path) {
 
 	for (auto& marker : m_labeling.bounding_box_markers.markers) {
 		nlohmann::json marker_json = {};
-		marker_json["file_path"] = marker.fs_path;
+		marker_json["file_path"] = marker.fs_path.str();
 		marker_json["instance_color"] = marker.instance_color;
 		std::vector<nlohmann::json> transform_rows;
 		for (int i = 0; i < 3; ++i) {
@@ -2361,7 +2361,7 @@ void Testbed::save_labels(const fs::path& data_path) {
 
 	for (auto& marker : m_labeling.mesh_markers.markers) {
 		nlohmann::json marker_json = {};
-		marker_json["file_path"] = marker.fs_path;
+		marker_json["file_path"] = marker.fs_path.str();
 		marker_json["instance_color"] = marker.instance_color;
 		std::vector<nlohmann::json> rows;
 		for (int i = 0; i < 3; ++i) {
@@ -3293,7 +3293,7 @@ void Testbed::assign_or_add_category(Testbed::Labeling::Marker& marker, const st
 	}
 }
 
-void Testbed::add_marker(const fs::path& data_path, bool select) {
+void Testbed::add_marker(const fs::path& data_path, bool select, bool center) {
     tlog::info() << "Loading mesh from '" << data_path << "'";
 
     Testbed::Labeling::Marker marker;
@@ -3301,12 +3301,14 @@ void Testbed::add_marker(const fs::path& data_path, bool select) {
         marker.transform = m_labeling.mesh_markers.labeling_origin;
         marker.mesh = load_obj_complete(data_path);
 
-		vec3 mean_vertice = vec3::zero();
-		for (auto& vertice : marker.mesh.verts) {
-			mean_vertice += vertice / float(marker.mesh.verts.size());
-		}
-		for (auto& vertice : marker.mesh.verts) {
-			vertice -= mean_vertice;
+		if (center) {
+			vec3 mean_vertice = vec3::zero();
+			for (auto& vertice : marker.mesh.verts) {
+				mean_vertice += vertice / float(marker.mesh.verts.size());
+			}
+			for (auto& vertice : marker.mesh.verts) {
+				vertice -= mean_vertice;
+			}
 		}
 
 		marker.update_bounding_box();
@@ -3348,6 +3350,9 @@ void Testbed::load_labels(const fs::path& data_path) {
 		return;
 	}
 	nlohmann::json labels = nlohmann::json::parse(infile, nullptr, true, true);
+
+	bool center_vertices = labels.contains("center_vertices") && (labels["center_vertices"] == true);
+
 	if (labels.contains("bounding_boxes")) {
 		for (auto&& bounding_box : labels["bounding_boxes"]) {
 			nlohmann::json& jsonmatrix_start = bounding_box["transform_matrix"];
@@ -3375,6 +3380,7 @@ void Testbed::load_labels(const fs::path& data_path) {
 			for (int i = 0; i < 3; ++i) {
 				m.instance_color(i) = bounding_box["instance_color"][i];
 			}
+			if (m_labeling.bounding_box_markers.marching_cubes.run_automatically) single_marker_marching_cubes(m, 1.0f, m_labeling.mesh_markers.marching_cubes.thresh, m_labeling.mesh_markers.marching_cubes.res);
 		}
 	}
 
@@ -3391,7 +3397,7 @@ void Testbed::load_labels(const fs::path& data_path) {
 
 	if (labels.contains("markers")) {
 		for (auto&& marker : labels["markers"]) {
-			add_marker(fs::path(m_labeling.meshes_root_dir) / marker["file_path"], false);
+			add_marker(fs::path(m_labeling.meshes_root_dir) / marker["file_path"], false, center_vertices);
 			Testbed::Labeling::Marker& m = m_labeling.mesh_markers.markers.back();
 			nlohmann::json& jsonmatrix_start = marker["transform_matrix"];
 			for (int i = 0; i < 3; ++i) {

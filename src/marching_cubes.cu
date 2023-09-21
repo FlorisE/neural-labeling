@@ -50,7 +50,7 @@ ivec3 get_marching_cubes_res(uint32_t res_1d, const BoundingBox &aabb) {
 void glCheckError(const char* file, unsigned int line) {
 	GLenum errorCode = glGetError();
 	while (errorCode != GL_NO_ERROR) {
-		std::string fileString(file);
+		std::string fileString(file);	
 		std::string error = "unknown error";
 		// clang-format off
 		switch (errorCode) {

@@ -1,3 +1,25 @@
+# Neural Labeling
+
+Why not use Neural Radiance Fields as a versatile platform for 3D dataset creation?
+
+This repository adds a new "Labeling Tools" window to instant-ngp.
+
+- Set the root directory for loading and saving meshes, starting from the instant-ngp executable folder.
+- Load and save scenes from a JSON file in instant-ngp executable folder.
+- Set a labeling origin under "Views and origin" and "Manipulate labeling origin".
+- Measure a known distance using "Measuring" and use the `scale_transforms.py` script in the `scripts` folder.
+- Annotate a scene of free standing objects using 3D bounding boxes.
+- Annotate a scene of cluttered objects using meshes.
+- Label each mesh with an affordance.
+- Generate various outputs by playing around with the rendering settings. We added an option to hide the NeRF rendering within the instant-ngp "Render mode" dropdown. Use the "Render NeRF overlay" option to mark occluded mesh pixels as black.
+- Alignment optimization with ICP is a work in progress.
+
+We plan to release a longer demonstration video soon.
+
+Currently only Linux is supported.
+
+Dataset preparation follows the same steps as instant-ngp.
+
 # Instant Neural Graphics Primitives ![](https://github.com/NVlabs/instant-ngp/workflows/CI/badge.svg)
 
 <img src="docs/assets_readme/fox.gif" height="342"/> <img src="docs/assets_readme/robot5.gif" height="342"/>
