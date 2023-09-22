@@ -3500,62 +3500,6 @@ void Testbed::marker_density_and_marching_cubes(const Testbed::Labeling::Marker&
     colors_gpu.copy_to_host(out_colors);
 }
 
-void Testbed::render_coordinate_frame(ImDrawList* list, const mat4& world2proj, const mat4x3& transform, float frame_size) {
-	const vec3* xforms = (const vec3*)&transform;
-	vec3 pos = xforms[3];
-	float thickness = frame_size / 0.025f; // 0.025 = default frame size
-	add_debug_line(list, world2proj, pos, pos+frame_size*xforms[0], 0xff4040ff, thickness);
-	add_debug_line(list, world2proj, pos, pos+frame_size*xforms[1], 0xff40ff40, thickness);
-	add_debug_line(list, world2proj, pos, pos+frame_size*xforms[2], 0xffff4040, thickness);
-}
-
-void Testbed::render_3d_bounding_box(ImDrawList* list, const mat4& world2proj, const mat4x3& world2model, const ImColor& color, const vec3& min, const vec3& max, float thickness) {
-	const vec3 a = min + transpose(mat3(world2model)) * vec3(world2model[3]);
-	const vec3 b = max + transpose(mat3(world2model)) * vec3(world2model[3]);
-	const mat3 R = mat3(world2model);
-
-	add_debug_line(list, world2proj, R * vec3{a.x, a.y, a.z}, R * vec3{a.x, a.y, b.z}, color, thickness); // Z
-	add_debug_line(list, world2proj, R * vec3{b.x, a.y, a.z}, R * vec3{b.x, a.y, b.z}, color, thickness);
-	add_debug_line(list, world2proj, R * vec3{a.x, b.y, a.z}, R * vec3{a.x, b.y, b.z}, color, thickness);
-	add_debug_line(list, world2proj, R * vec3{b.x, b.y, a.z}, R * vec3{b.x, b.y, b.z}, color, thickness);
-
-	add_debug_line(list, world2proj, R * vec3{a.x, a.y, a.z}, R * vec3{b.x, a.y, a.z}, color, thickness); // X
-	add_debug_line(list, world2proj, R * vec3{a.x, b.y, a.z}, R * vec3{b.x, b.y, a.z}, color, thickness);
-	add_debug_line(list, world2proj, R * vec3{a.x, a.y, b.z}, R * vec3{b.x, a.y, b.z}, color, thickness);
-	add_debug_line(list, world2proj, R * vec3{a.x, b.y, b.z}, R * vec3{b.x, b.y, b.z}, color, thickness);
-
-	add_debug_line(list, world2proj, R * vec3{a.x, a.y, a.z}, R * vec3{a.x, b.y, a.z}, color, thickness); // Y
-	add_debug_line(list, world2proj, R * vec3{b.x, a.y, a.z}, R * vec3{b.x, b.y, a.z}, color, thickness);
-	add_debug_line(list, world2proj, R * vec3{a.x, a.y, b.z}, R * vec3{a.x, b.y, b.z}, color, thickness);
-	add_debug_line(list, world2proj, R * vec3{b.x, a.y, b.z}, R * vec3{b.x, b.y, b.z}, color, thickness);
-}
-
-void Testbed::render_3d_bounding_boxes(ImDrawList* list, const mat4& world2proj, const Testbed::Labeling::Marker& marker, float thickness) {
-	const vec3 a = marker.bounding_box.min + transpose(mat3(marker.transform)) * vec3(marker.transform[3]);
-	const vec3 b = marker.bounding_box.max + transpose(mat3(marker.transform)) * vec3(marker.transform[3]);
-	const ImColor color(marker.instance_color[0], marker.instance_color[1], marker.instance_color[2], 1.0f);
-	render_3d_bounding_box(list, world2proj, marker.transform, color, marker.bounding_box.min, marker.bounding_box.max, thickness);
-}
-
-void Testbed::render_mesh_extraction_bounding_boxes(ImDrawList* list, const mat4& world2proj, const Testbed::Labeling::Marker& marker, float thickness) {
-	const mat4x3& world2model = marker.transform;
-	const vec3 a = marker.bounding_box.min + transpose(mat3(world2model)) * vec3(world2model[3]);
-	const vec3 b = marker.bounding_box.max + transpose(mat3(world2model)) * vec3(world2model[3]);
-	mat3 R = transpose(mat3(world2model));
-
-	visualize_cube(list, world2proj, a, b, R, thickness);
-}
-
-void Testbed::render_mc_bounding_boxes(ImDrawList* list, const mat4 world2proj, const Testbed::Labeling::Marker& marker, float thickness) {
-	const mat4x3& world2model = marker.transform;
-
-	vec3 a = (marker.bounding_box.min * m_labeling.mesh_markers.marching_cubes.scale) + transpose(mat3(world2model)) * vec3(world2model[3]);
-	vec3 b = (marker.bounding_box.max * m_labeling.mesh_markers.marching_cubes.scale) + transpose(mat3(world2model)) * vec3(world2model[3]);
-	mat3 R = transpose(mat3(world2model));
-
-	visualize_cube(list, world2proj, a, b, R, thickness);
-}
-
 void Testbed::compute_mesh_vertex_colors() {
 	uint32_t n_verts = (uint32_t)m_mesh.verts.size();
 	if (!n_verts) {
