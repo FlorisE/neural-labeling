@@ -28,3 +28,6 @@
 [submodule "dependencies/OpenXR-SDK"]
 	path = dependencies/OpenXR-SDK
 	url = https://github.com/KhronosGroup/OpenXR-SDK.git
+[submodule "dependencies/annoy"]
+	path = dependencies/annoy
+	url = https://github.com/FlorisE/annoy
