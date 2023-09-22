@@ -887,7 +887,7 @@ public:
 		struct Markers {
 			std::vector<Marker> markers;
 #ifdef NGP_GUI
-I			mGuizmo::OPERATION guizmo_op = ImGuizmo::TRANSLATE;
+			ImGuizmo::OPERATION guizmo_op = ImGuizmo::TRANSLATE;
 #endif
 			ESelectableRenderMode origin_render_mode = ESelectableRenderMode::Off;
 			float origin_size = 0.025f;
