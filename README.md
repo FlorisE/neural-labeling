@@ -1,4 +1,7 @@
 # Neural Labeling
+> __NeuralLabeling: A versatile toolset for labeling vision datasets using Neural Radiance Fields__  
+> [Floris Erich](https://staff.aist.go.jp/floris.erich/), [Naoya Chiba](https://sites.google.com/view/n-chiba-), Yusuke Yoshiyasu, [Noriaki Ando](https://n-ando.github.io/), [Ryo Hanai](https://researchmap.jp/r-hanai), [Yukiyasu Domae](https://researchmap.jp/yukiyasu-domae)  
+> __[Project page](https://florise.github.io/neural_labeling_web/)&nbsp;/ [Paper](https://arxiv.org/abs/2309.11966)&nbsp;/ [Video](https://www.youtube.com/watch?v=-5lZR6Xzh8w)__
 
 Why not use Neural Radiance Fields as a versatile platform for 3D dataset creation?
 
@@ -12,11 +15,14 @@ This repository adds a new "Labeling Tools" window to instant-ngp.
 - Annotate a scene of cluttered objects using meshes.
 - Label each mesh with an affordance.
 - Generate various outputs by playing around with the rendering settings. We added an option to hide the NeRF rendering within the instant-ngp "Render mode" dropdown. Use the "Render NeRF overlay" option to mark occluded mesh pixels as black.
+
+Some known issues:
 - Alignment optimization with ICP is a work in progress.
+- Importing meshes from external sources is supported, but NeuralLabeling does not support textures yet. Vertex colors are supported (you can convert textures to vertex colors via tools such as MeshLab).
+- Our mesh rendering is quite basic and aimed at generating masks and depth maps, not photorealism. For photorealistic mesh rendering check out works such as http://arxiv.org/abs/2309.04581
+- Currently only Linux is supported.
 
 We plan to release a longer demonstration video soon.
-
-Currently only Linux is supported.
 
 Dataset preparation follows the same steps as instant-ngp.
 
