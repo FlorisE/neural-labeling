@@ -647,16 +647,6 @@ std::vector<vec3> Testbed::crop_box_corners(bool nerf_space) const {
 	return rv;
 }
 
-#ifdef NGP_GUI
-bool imgui_colored_button(const char *name, float hue) {
-	ImGui::PushStyleColor(ImGuiCol_Button, (ImVec4)ImColor::HSV(hue, 0.6f, 0.6f));
-	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, (ImVec4)ImColor::HSV(hue, 0.7f, 0.7f));
-	ImGui::PushStyleColor(ImGuiCol_ButtonActive, (ImVec4)ImColor::HSV(hue, 0.8f, 0.8f));
-	bool rv = ImGui::Button(name);
-	ImGui::PopStyleColor(3);
-	return rv;
-}
-
 void Testbed::reload_meshes() {
 	m_labeling.mesh_markers.available_meshes.empty();
 	m_labeling.mesh_markers.available_meshes_str = "None";
@@ -679,6 +669,16 @@ void Testbed::reload_meshes() {
 		m_labeling.mesh_markers.available_meshes_str.push_back('\0');
 		m_labeling.mesh_markers.available_meshes_str.push_back('\0');
 	}
+}
+
+#ifdef NGP_GUI
+bool imgui_colored_button(const char *name, float hue) {
+	ImGui::PushStyleColor(ImGuiCol_Button, (ImVec4)ImColor::HSV(hue, 0.6f, 0.6f));
+	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, (ImVec4)ImColor::HSV(hue, 0.7f, 0.7f));
+	ImGui::PushStyleColor(ImGuiCol_ButtonActive, (ImVec4)ImColor::HSV(hue, 0.8f, 0.8f));
+	bool rv = ImGui::Button(name);
+	ImGui::PopStyleColor(3);
+	return rv;
 }
 
 void Testbed::imgui() {

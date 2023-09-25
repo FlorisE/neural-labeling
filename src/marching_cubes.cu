@@ -854,6 +854,10 @@ void save_mesh_cpu(
 		free(tex);
 	}
 
+	if (!path.parent_path().exists()) {
+		fs::create_directory(path.parent_path());
+	}
+
 	FILE* f = native_fopen(path, "wb");
 	if (!f) {
 		throw std::runtime_error{fmt::format("Failed to open '{}' for writing", path.str())};
