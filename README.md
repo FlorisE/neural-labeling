@@ -28,6 +28,8 @@ Dataset preparation follows the same steps as instant-ngp.
 
 We provided an example dataset to play around with, use `instant-ngp data/nerf/basket_objects` to load it.
 
+Forked from [instant-ngp](https://github.com/NVlabs/instant-ngp) ([commit](https://github.com/NVlabs/instant-ngp/commit/090aed613499ac2dbba3c2cede24befa248ece8a)).
+
 # Instant Neural Graphics Primitives ![](https://github.com/NVlabs/instant-ngp/workflows/CI/badge.svg)
 
 <img src="docs/assets_readme/fox.gif" height="342"/> <img src="docs/assets_readme/robot5.gif" height="342"/>
