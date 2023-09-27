@@ -904,8 +904,7 @@ void Testbed::imgui() {
 												return strcmp(m.fs_path.str().c_str(), m_imgui.insert_bounding_box_path) == 0; 
 												})
 								);
-			ImGui::SameLine();
-			if (ImGui::Button("Add")) {
+			if (ImGui::Button("Insert bounding box")) {
 				ImGui::CloseCurrentPopup();
 				mat4 transform = mat4::identity();
 				vec4 middle(0.5, 0.5, 0.5, 1.0);
@@ -923,6 +922,9 @@ void Testbed::imgui() {
 				if (m_labeling.bounding_box_markers.marching_cubes.run_automatically) single_marker_marching_cubes(bb_marker, 1.0f, m_labeling.mesh_markers.marching_cubes.thresh, m_labeling.mesh_markers.marching_cubes.res);
 			}
 			ImGui::EndDisabled();
+					if (imgui_colored_button("Clear all", 0.f)) {
+						m_labeling.bounding_box_markers.markers.clear();
+					}
 
             if (ImGui::BeginListBox("Bounding boxes")) {
 				for (int i = 0; i < m_labeling.bounding_box_markers.markers.size(); ++i) {
@@ -1178,6 +1180,9 @@ void Testbed::imgui() {
 					add_marker(fs::path(m_imgui.meshes_root_dir) / m_labeling.mesh_markers.available_meshes[m_labeling.mesh_markers.selected_mesh-1], true, false);
 				}
 			}
+                        if (imgui_colored_button("Clear all", 0.f)) {
+                                m_labeling.mesh_markers.markers.clear();
+                        }
 
             if (ImGui::BeginListBox("Meshes")) {
                 for (int i = 0; i < m_labeling.mesh_markers.markers.size(); ++i) {
@@ -1221,10 +1226,6 @@ void Testbed::imgui() {
 				ImGui::SameLine();
 				if (imgui_colored_button("Delete", 0.f)) {
 					m_labeling.mesh_markers.markers.erase(iterator);
-				}
-				ImGui::SameLine();
-				if (imgui_colored_button("Clear all", 0.f)) {
-					m_labeling.mesh_markers.markers.clear();
 				}
 			}
 
