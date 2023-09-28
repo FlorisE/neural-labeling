@@ -648,7 +648,7 @@ std::vector<vec3> Testbed::crop_box_corners(bool nerf_space) const {
 }
 
 void Testbed::reload_meshes() {
-	m_labeling.mesh_markers.available_meshes.empty();
+	m_labeling.mesh_markers.available_meshes.clear();
 	m_labeling.mesh_markers.available_meshes_str = "None";
 	if (fs::path(m_imgui.meshes_root_dir).is_directory()) {
 		std::vector<std::string> paths;
@@ -970,31 +970,11 @@ void Testbed::imgui() {
 						}
 					}
 					ImGui::SameLine();
-					if (ImGui::Button("To marker")) {
-						Testbed::Labeling::Marker new_marker;
-						new_marker.transform = mat4::identity();
-						//new_marker.transform[0] = bb_marker.transform[0];
-						//new_marker.transform[1] = bb_marker.transform[1];
-						//new_marker.transform[2] = bb_marker.transform[2];
-						new_marker.transform[3] = bb_marker.transform[3];
-						new_marker.bounding_box.min = iterator->bounding_box.min;
-						new_marker.bounding_box.max = iterator->bounding_box.max;
-						new_marker.instance_color = iterator->instance_color;
-						new_marker.mesh.vert_colors = iterator->mc_colors;
-						new_marker.mesh.vert_normals = iterator->mc_normals;
-						new_marker.mesh.indices = iterator->mc_indices;
-						new_marker.mesh.verts.reserve(iterator->mc_verts.size());
-						// verts for MC are in world coordinates, but mesh verts are in local coordinates
-						for (int i = 0; i < iterator->mc_verts.size(); ++i) {
-							new_marker.mesh.verts.push_back(iterator->mc_verts[i] - bb_marker.transform[3]);
-						}
-						new_marker.fs_path = fs::path(iterator->fs_path).with_extension("obj");
-						
-						assign_or_add_category(new_marker, new_marker.fs_path.str());
-
-						m_labeling.mesh_markers.markers.push_back(new_marker);
-						save_mesh_cpu(new_marker.mesh.verts, new_marker.mesh.vert_normals, new_marker.mesh.vert_colors, new_marker.mesh.indices, fs::path(m_imgui.meshes_root_dir) / fs::path(new_marker.fs_path), m_mesh.unwrap, m_nerf.training.dataset.scale, vec3{0, 0, 0});
+					if (ImGui::Button("To mesh marker")) {
+						bounding_box_to_mesh_marker(bb_marker);
 					}
+
+					ImGui::Text("Clicking 'To mesh marker' will overwrite existing meshes in the meshes root folder that have a conflicting name");
 
 					if (ImGui::BeginPopupModal("Rename bounding box", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 						ImGui::InputText("Output name", m_imgui.insert_bounding_box_path, sizeof(m_imgui.insert_bounding_box_path));
@@ -1208,7 +1188,7 @@ void Testbed::imgui() {
             if (iterator != m_labeling.mesh_markers.markers.end()) {
 				auto& marker = *iterator;
 				if (ImGui::Button("Duplicate")) {
-					Testbed::Labeling::Marker new_marker;
+					Testbed::Labeling::MeshMarker new_marker;
 					new_marker.transform[0] = marker.transform[0];
 					new_marker.transform[1] = marker.transform[1];
 					new_marker.transform[2] = marker.transform[2];
@@ -1216,7 +1196,7 @@ void Testbed::imgui() {
 					new_marker.bounding_box.min = marker.bounding_box.min;
 					new_marker.bounding_box.max = marker.bounding_box.max;
 					new_marker.instance_color = marker.instance_color;
-					new_marker.mesh = marker.mesh;
+					new_marker.loaded_mesh = marker.loaded_mesh;
 					new_marker.fs_path = marker.fs_path;
 					new_marker.category = marker.category;
 					new_marker.selected = true;
@@ -1257,8 +1237,8 @@ void Testbed::imgui() {
 				}
 				ImGui::Checkbox("Hidden", &marker.hidden);
 	
-				if (ImGui::TreeNode("Affordance")) {
-					ImGui::Checkbox("Translate affordance instead of marker", &m_labeling.mesh_markers.translate_affordance_instead_of_marker);
+				if (ImGui::TreeNode("Affordance boxes")) {
+					ImGui::Checkbox("Translate affordance boxes instead of marker", &m_labeling.mesh_markers.translate_affordance_instead_of_marker);
 					if (m_labeling.mesh_markers.translate_affordance_instead_of_marker) {
 						if (ImGui::RadioButton("Translate", m_labeling.mesh_markers.affordance_guizmo_op == ImGuizmo::TRANSLATE))
 							m_labeling.mesh_markers.affordance_guizmo_op = ImGuizmo::TRANSLATE;
@@ -1273,30 +1253,76 @@ void Testbed::imgui() {
 							m_labeling.mesh_markers.affordance_guizmo_mode = ImGuizmo::WORLD;
 						}
 					}
-					if (marker.affordance != nullptr) {
-						if (imgui_colored_button("Delete", 0.f)) {
-							marker.affordance = nullptr;
-						}
-						if (marker.affordance != nullptr) {
-							auto& translation = marker.affordance->transform[3];
-							auto& bounding_box = marker.affordance->bounding_box;
 
-							vec3 diag = bounding_box.diag();
-							bool edit_diag = false;
-							edit_diag |= ImGui::SliderFloat("Size x", ((float*)&diag)+0, 0.001f, 1.0f, "%.3f");
-							edit_diag |= ImGui::SliderFloat("Size y", ((float*)&diag)+1, 0.001f, 1.0f, "%.3f");
-							edit_diag |= ImGui::SliderFloat("Size z", ((float*)&diag)+2, 0.001f, 1.0f, "%.3f");
-							
-							if (edit_diag) {
-								vec3 cen = bounding_box.center();
-								bounding_box = BoundingBox(cen - diag * 0.5f, cen + diag * 0.5f);
+					if (ImGui::Button("Add")) {
+						const auto& diag = marker.bounding_box.diag();
+						marker.loaded_mesh->affordance_boxes.push_back(ngp::Testbed::Labeling::AffordanceBox(-vec3{0.5f * diag.x, 0.5f * diag.y, 0.5f * diag.z}, vec3{0.5f * diag.x, 0.5f * diag.y, 0.5f * diag.z}));
+						marker.loaded_mesh->affordance_boxes_update_saved = false;
+					}
+
+					if (ImGui::BeginListBox("Affordance boxes")) {
+						for (int i = 0; i < marker.loaded_mesh->affordance_boxes.size(); ++i) {
+							ImGui::PushID(i);
+							std::string label = marker.loaded_mesh->affordance_boxes[i].label.size() > 0 ? marker.loaded_mesh->affordance_boxes[i].label : "Unlabeled";
+							if (ImGui::Selectable(label.c_str(), marker.loaded_mesh->affordance_boxes[i].selected)) {
+								if (!marker.loaded_mesh->affordance_boxes[i].selected) {
+									for (auto &affordance: marker.loaded_mesh->affordance_boxes) {
+										if (affordance.selected) {
+											affordance.selected = false;
+											break;
+										}
+									}
+									 marker.loaded_mesh->affordance_boxes[i].selected = true;
+								} else {
+									 marker.loaded_mesh->affordance_boxes[i].selected = false;
+								}
+							};
+							ImGui::PopID();
+						}
+						ImGui::EndListBox();
+					}
+
+					auto affordance_box_iterator = std::find_if(marker.loaded_mesh->affordance_boxes.begin(), marker.loaded_mesh->affordance_boxes.end(), [&](const ngp::Testbed::Labeling::AffordanceBox& ab) { return ab.selected; });
+
+					if (affordance_box_iterator != marker.loaded_mesh->affordance_boxes.end()) {
+
+						if (imgui_colored_button("Delete", 0.f)) {
+							auto new_affordance_box_iterator = marker.loaded_mesh->affordance_boxes.erase(affordance_box_iterator);
+							if (new_affordance_box_iterator != marker.loaded_mesh->affordance_boxes.end()) {
+								new_affordance_box_iterator->selected = true;
 							}
 						}
-					} else {
-						if (ImGui::Button("Add")) {
-							vec3 diag = marker.bounding_box.diag();
-							marker.affordance = std::make_shared<ngp::Testbed::Labeling::Marker::Affordance>(-vec3{0.5f * diag.x, 0.5f * diag.y, 0.5f * diag.z}, vec3{0.5f * diag.x, 0.5f * diag.y, 0.5f * diag.z});
+
+						auto& affordance_box = *affordance_box_iterator;
+
+						char label[100] = "";
+						strcpy(label, affordance_box.label.c_str());
+						if (ImGui::InputText("Label", label, sizeof(label))) {
+							affordance_box.label = std::string(label);
+							marker.loaded_mesh->affordance_boxes_update_saved = false;
 						}
+
+						auto& translation = affordance_box_iterator->transform[3];
+						auto& bounding_box = affordance_box_iterator->bounding_box;
+
+						vec3 diag = bounding_box.diag();
+						bool edit_diag = false;
+						edit_diag |= ImGui::SliderFloat("Size x", ((float*)&diag)+0, 0.001f, 1.0f, "%.3f");
+						edit_diag |= ImGui::SliderFloat("Size y", ((float*)&diag)+1, 0.001f, 1.0f, "%.3f");
+						edit_diag |= ImGui::SliderFloat("Size z", ((float*)&diag)+2, 0.001f, 1.0f, "%.3f");
+						
+						if (edit_diag) {
+							vec3 cen = bounding_box.center();
+							bounding_box = BoundingBox(cen - diag * 0.5f, cen + diag * 0.5f);
+							marker.loaded_mesh->affordance_boxes_update_saved = false;
+						}
+
+						ImGui::BeginDisabled(marker.loaded_mesh->affordance_boxes_update_saved);
+						if (ImGui::Button("Save")) {
+							marker.loaded_mesh->affordance_boxes_update_saved = true;
+							save_affordances(fs::path(m_imgui.meshes_root_dir) / fs::path(marker.fs_path.stem().str() + "_affordances.json"), marker.loaded_mesh->affordance_boxes);
+						}
+						ImGui::EndDisabled();
 					}
 					ImGui::TreePop();
 				}
@@ -2454,21 +2480,24 @@ void Testbed::draw_visualizations(ImDrawList* list, const mat4x3& camera_matrix)
 											m_labeling.mesh_markers.guizmo_op, m_labeling.mesh_markers.guizmo_mode, (float *) &matrix, NULL, (float *) (use_snap ? &m_labeling.mesh_markers.snap : NULL))) {
 							marker.transform = matrix;
 						}
-					} else if (marker.affordance != nullptr) {
-						mat4 matrix = mat4::identity();
-						matrix = mat3(marker.transform) * mat3(marker.affordance->transform);
-						matrix[3] = marker.transform[3] + marker.affordance->transform[3];
-						matrix[3][3] = 1;
-						mat4 deltaMatrix = mat4::zero();
-						if (ImGuizmo::Manipulate((const float *) &world2view, (const float *) &view2proj_guizmo, m_labeling.mesh_markers.affordance_guizmo_op,  m_labeling.mesh_markers.affordance_guizmo_mode, (float *) &matrix, NULL, NULL)) {
-							mat3 rotation = inverse(mat3(marker.transform)) * mat3(matrix);
-							vec3 translation = vec3(matrix[3]) - marker.transform[3];
-						 	//mat3 rotation = mat3(marker.affordance->transform) * mat3(deltaMatrix);
-						 	//vec3 translation = marker.affordance->transform[3] + vec3(deltaMatrix[3]);
-						 	mat4x3 new_transform = mat4::identity();
-						 	new_transform = rotation;
-						 	new_transform[3] = translation;
-						 	marker.affordance->transform = new_transform;
+					} else {
+						for (auto& affordance_box : marker.loaded_mesh->affordance_boxes) {
+							if (affordance_box.selected) {
+								mat4 matrix = mat4::identity();
+								matrix = mat3(marker.transform) * mat3(affordance_box.transform);
+								matrix[3] = marker.transform[3] + affordance_box.transform[3];
+								matrix[3][3] = 1;
+								mat4 deltaMatrix = mat4::zero();
+								if (ImGuizmo::Manipulate((const float *) &world2view, (const float *) &view2proj_guizmo, m_labeling.mesh_markers.affordance_guizmo_op,  m_labeling.mesh_markers.affordance_guizmo_mode, (float *) &matrix, NULL, NULL)) {
+									mat3 rotation = inverse(mat3(marker.transform)) * mat3(matrix);
+									vec3 translation = vec3(matrix[3]) - marker.transform[3];
+									mat4x3 new_transform = mat4::identity();
+									new_transform = rotation;
+									new_transform[3] = translation;
+									affordance_box.transform = new_transform;
+									marker.loaded_mesh->affordance_boxes_update_saved = false;
+								}
+							}
 						}
 					}
 				}
@@ -2543,21 +2572,23 @@ void Testbed::draw_visualizations(ImDrawList* list, const mat4x3& camera_matrix)
 				if (m_labeling.mesh_markers.render_3d_bounding_boxes) {
 					render_3d_bounding_boxes(list, world2proj, marker, m_labeling.mesh_markers.bounding_box_thickness);
 				}
-				if (m_labeling.mesh_markers.render_affordances && marker.affordance != nullptr) {
-					auto& bbox = marker.affordance->bounding_box;
+				if (m_labeling.mesh_markers.render_affordances) {
+					for (const auto& affordance_box : marker.loaded_mesh->affordance_boxes) {
+						auto& bbox = affordance_box.bounding_box;
 
-					mat3 rotation = mat3(marker.transform) * mat3(marker.affordance->transform);
-					vec3 translation = marker.transform[3] + marker.affordance->transform[3];
-					mat4x3 pose = rotation;
-					pose[3] = translation;
+						mat3 rotation = mat3(marker.transform) * mat3(affordance_box.transform);
+						vec3 translation = marker.transform[3] + affordance_box.transform[3];
+						mat4x3 pose = rotation;
+						pose[3] = translation;
 
-					render_3d_bounding_box(list,
-										   world2proj,
-										   pose,
-										   ImColor(1.0f, 1.0f, 1.0f, 1.0f),
-										   bbox.min,
-										   bbox.max,
-										   m_labeling.mesh_markers.bounding_box_thickness);
+						render_3d_bounding_box(list,
+											world2proj,
+											pose,
+											ImColor(1.0f, 1.0f, 1.0f, 1.0f),
+											bbox.min,
+											bbox.max,
+											m_labeling.mesh_markers.bounding_box_thickness);
+					}
 				}
 				if (m_labeling.mesh_markers.origin_render_mode == ESelectableRenderMode::All || 
 					(m_labeling.mesh_markers.origin_render_mode == ESelectableRenderMode::Selected && marker.selected)) 
@@ -3313,7 +3344,7 @@ void get_mesh_pixels_in_camera_plane(
 }
 
 Testbed::BoundingBox2D Testbed::calculate_marker_bounding_box(
-	const Testbed::Labeling::Marker& marker,
+	const Testbed::Labeling::MeshMarker& marker,
 	const ivec2& res,
 	const vec2& center, 
 	const vec2& focal_length,
@@ -3325,10 +3356,10 @@ Testbed::BoundingBox2D Testbed::calculate_marker_bounding_box(
 	int maxx = 0;
 	int maxy = 0;
 
-	size_t n = marker.mesh.verts.size();
+	size_t n = marker.loaded_mesh->mesh.verts.size();
 
 	GPUMemory<vec3> verts(n);
-	verts.copy_from_host(marker.mesh.verts);
+	verts.copy_from_host(marker.loaded_mesh->mesh.verts);
 	GPUMemory<int> p_prime_norm_x_pixels(n);
 	p_prime_norm_x_pixels.memset(0);
 	GPUMemory<int> p_prime_norm_y_pixels(n);
@@ -3373,7 +3404,7 @@ Testbed::BoundingBox2D Testbed::calculate_marker_bounding_box(
 	std::vector<int> p_prime_norm_y_pixels_cpu(n);
 	p_prime_norm_y_pixels.copy_to_host(p_prime_norm_y_pixels_cpu);
 
-	for (int i = 0; i < marker.mesh.verts.size(); ++i) {
+	for (int i = 0; i < marker.loaded_mesh->mesh.verts.size(); ++i) {
 		if (p_prime_norm_x_pixels_cpu[i] < minx) {
 			minx = p_prime_norm_x_pixels_cpu[i];
 		}
@@ -3411,7 +3442,7 @@ std::vector<Testbed::BoundingBox2D> Testbed::calculate_marker_bounding_boxes(int
 
 	std::vector<Testbed::BoundingBox2D> result;
 	for (auto& marker : m_labeling.mesh_markers.markers) {
-		if (marker.mesh.verts.size() != 0) {
+		if (marker.loaded_mesh->mesh.verts.size() != 0) {
 			BoundingBox2D boundingBox = calculate_marker_bounding_box(marker, res, center, focal_length, world2view, stream);
 			marker.bounding_box_2d.min = {boundingBox.maxminx, boundingBox.maxminy};
 			marker.bounding_box_2d.max = {boundingBox.minmaxx, boundingBox.minmaxy};
@@ -3665,13 +3696,14 @@ void Testbed::draw_gui() {
 			ivec2 res = {display_w, display_h};
 			vec2 focal_length = calc_focal_length(res, m_relative_focal_length, m_fov_axis, m_zoom);
 			//glClear(GL_DEPTH_BUFFER_BIT);
-			for (const Testbed::Labeling::Marker& marker : m_labeling.mesh_markers.markers) {
+			for (const Testbed::Labeling::MeshMarker& marker : m_labeling.mesh_markers.markers) {
 				if (!marker.hidden) {
-					if (marker.mesh.verts.size() != 0) {
+					auto& mesh = marker.loaded_mesh->mesh;
+					if (marker.loaded_mesh->mesh.verts.size() != 0) {
 						std::vector<vec3> temp_vert_buffer;
-						temp_vert_buffer.reserve(marker.mesh.verts.size());
-						for (int i = 0; i < marker.mesh.verts.size(); ++i) {
-							temp_vert_buffer.push_back(marker.mesh.verts[i]);
+						temp_vert_buffer.reserve(mesh.verts.size());
+						for (int i = 0; i < mesh.verts.size(); ++i) {
+							temp_vert_buffer.push_back(mesh.verts[i]);
 						}
 						int mode = 0;
 
@@ -3680,9 +3712,9 @@ void Testbed::draw_gui() {
 						switch (m_labeling.mesh_markers.render_mode) {
 							case ECustomMeshRenderMode::Shade:
 								mode = 0;
-								temp_color_buffer.reserve(marker.mesh.vert_colors.size());
-								for (int i = 0; i < marker.mesh.vert_colors.size(); ++i) {
-									vec4 color = marker.mesh.vert_colors[i];
+								temp_color_buffer.reserve(mesh.vert_colors.size());
+								for (int i = 0; i < mesh.vert_colors.size(); ++i) {
+									vec4 color = mesh.vert_colors[i];
 									color[3] = m_markers_render_alpha;
 									temp_color_buffer.push_back(color);
 								}
@@ -3699,8 +3731,8 @@ void Testbed::draw_gui() {
 							case ECustomMeshRenderMode::InstanceSegmentation:
 							{
 								mode = 4;
-								temp_color_buffer.reserve(marker.mesh.vert_colors.size());
-								for (int i = 0; i < marker.mesh.vert_colors.size(); ++i) {
+								temp_color_buffer.reserve(mesh.vert_colors.size());
+								for (int i = 0; i < mesh.vert_colors.size(); ++i) {
 									vec4 color = marker.instance_color;
 									color[3] = m_markers_render_alpha;
 									temp_color_buffer.push_back(color);
@@ -3709,8 +3741,8 @@ void Testbed::draw_gui() {
 							}
 							case ECustomMeshRenderMode::CategorySegmentation:
 								mode = 5;
-								temp_color_buffer.reserve(marker.mesh.vert_colors.size());
-								for (int i = 0; i < marker.mesh.vert_colors.size(); ++i) {
+								temp_color_buffer.reserve(mesh.vert_colors.size());
+								for (int i = 0; i < mesh.vert_colors.size(); ++i) {
 									vec4 color = marker.category->color;
 									color[3] = m_markers_render_alpha;
 									temp_color_buffer.push_back(color);
@@ -3718,16 +3750,22 @@ void Testbed::draw_gui() {
 								break;
 							case ECustomMeshRenderMode::Affordances:
 								mode = 6;
-								temp_color_buffer.reserve(marker.mesh.vert_colors.size());
-								for (int i = 0; i < marker.mesh.vert_colors.size(); ++i) {
-									if (marker.affordance != nullptr) {
-										auto affordance = *marker.affordance;
-										vec3 p = marker.mesh.verts[i];
-										p = mat3(affordance.transform) * p;
-										p -= affordance.transform[3];
-										if (affordance.bounding_box.contains(p)) {
-											temp_color_buffer.push_back(vec4{1, 1, 1, 1});
-										} else {
+								temp_color_buffer.reserve(mesh.vert_colors.size());
+								for (int i = 0; i < mesh.vert_colors.size(); ++i) {
+									auto& affordance_boxes = marker.loaded_mesh->affordance_boxes;
+									if (affordance_boxes.size() > 0) {
+										bool found = false;
+										for (const auto& affordance_box : affordance_boxes) {
+											vec3 p = mesh.verts[i];
+											p = mat3(affordance_box.transform) * p;
+											p -= affordance_box.transform[3];
+											if (affordance_box.bounding_box.contains(p)) {
+												temp_color_buffer.push_back(vec4{1, 1, 1, 1});
+												found = true;
+												break;
+											}
+										}
+										if (!found) {
 											temp_color_buffer.push_back(vec4{0, 0, 0, 1});
 										}
 									} else {
@@ -3737,17 +3775,17 @@ void Testbed::draw_gui() {
 								break;
 						}
 
-						draw_marker_mesh(marker.mesh.verts, 
-							marker.mesh.vert_normals,
+						draw_marker_mesh(mesh.verts, 
+							mesh.vert_normals,
 							temp_color_buffer,
-							marker.mesh.indices,
+							mesh.indices,
 							res,
 							focal_length,
 							m_smoothed_camera,
 							marker.transform,
 							render_screen_center(m_screen_center),
 							mode,
-							marker.mesh.texture_id,
+							mesh.texture_id,
 							marker_program,
 							m_ndc_znear,
 							m_ndc_zfar,		

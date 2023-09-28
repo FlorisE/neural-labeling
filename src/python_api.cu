@@ -732,12 +732,12 @@ PYBIND11_MODULE(pyngp, m) {
 		.def_readwrite("color", &Testbed::Labeling::Category::color)
 		;
 
-	py::class_<Testbed::Labeling::Marker> marker(labeling, "Marker");
-	marker
+	py::class_<Testbed::Labeling::MeshMarker> mesh_marker(labeling, "MeshMarker");
+	mesh_marker
 		.def_readonly("instance_color", &Testbed::Labeling::Marker::instance_color)
 		.def_readonly("fs_path", &Testbed::Labeling::Marker::fs_path)
-		.def_readonly("category", &Testbed::Labeling::Marker::category)
-		.def_readonly("bounding_box_2d", &Testbed::Labeling::Marker::bounding_box_2d)
+		.def_readonly("category", &Testbed::Labeling::MeshMarker::category)
+		.def_readonly("bounding_box_2d", &Testbed::Labeling::MeshMarker::bounding_box_2d)
 		;
 
 	py::class_<Testbed::Labeling::BoundingBox2D> bounding_box_2d(labeling, "BoundingBox2D");

@@ -3267,7 +3267,8 @@ void Testbed::optimise_markers(uint32_t n_steps, float scale, float thresh, int 
 	}
 }
 
-void Testbed::assign_or_add_category(Testbed::Labeling::Marker& marker, const std::string& cat_name) {
+void Testbed::assign_or_add_category(Testbed::Labeling::MeshMarker& marker, const std::string& cat_name) {
+	tlog::info() << "Assign or add category " << cat_name;
 	std::random_device rd;
 	std::mt19937 gen(rd());
 	std::uniform_real_distribution<> dis(0.0f, 1.0f);
@@ -3293,20 +3294,160 @@ void Testbed::assign_or_add_category(Testbed::Labeling::Marker& marker, const st
 	}
 }
 
+void Testbed::bounding_box_to_mesh_marker(const Testbed::Labeling::BoundingBoxMarker& bb_marker) {
+	Testbed::Labeling::MeshMarker new_marker;
+	new_marker.transform = mat4::identity();
+	new_marker.transform[3] = bb_marker.transform[3];
+	new_marker.bounding_box.min = bb_marker.bounding_box.min;
+	new_marker.bounding_box.max = bb_marker.bounding_box.max;
+	new_marker.instance_color = bb_marker.instance_color;
+	new_marker.loaded_mesh = std::make_shared<Testbed::Labeling::LoadedMesh>();
+	auto& mesh = new_marker.loaded_mesh->mesh;
+	mesh.vert_colors = bb_marker.mc_colors;
+	mesh.vert_normals = bb_marker.mc_normals;
+	mesh.indices = bb_marker.mc_indices;
+	mesh.verts.reserve(bb_marker.mc_verts.size());
+	// verts for MC are in world coordinates, but mesh verts are in local coordinates
+	for (int i = 0; i < bb_marker.mc_verts.size(); ++i) {
+		mesh.verts.push_back(bb_marker.mc_verts[i] - bb_marker.transform[3]);
+	}
+	new_marker.fs_path = fs::path(bb_marker.fs_path).with_extension("obj");
+
+	for (auto& existing_marker : m_labeling.mesh_markers.markers) {
+		new_marker.loaded_mesh->affordance_boxes = existing_marker.loaded_mesh->affordance_boxes;
+		new_marker.loaded_mesh->affordance_boxes_update_saved = existing_marker.loaded_mesh->affordance_boxes_update_saved;
+
+		if (existing_marker.fs_path == new_marker.fs_path) {
+			existing_marker.loaded_mesh = new_marker.loaded_mesh;
+		}
+	}
+	
+	assign_or_add_category(new_marker, new_marker.fs_path.str());
+
+	m_labeling.mesh_markers.markers.push_back(new_marker);
+	save_mesh_cpu(mesh.verts,
+					mesh.vert_normals,
+					mesh.vert_colors,
+					mesh.indices,
+					fs::path(m_imgui.meshes_root_dir) / fs::path(new_marker.fs_path),
+					m_mesh.unwrap,
+					m_nerf.training.dataset.scale,
+					vec3{0, 0, 0});
+}
+
+void Testbed::save_affordances(const fs::path& data_path, const std::vector<Testbed::Labeling::AffordanceBox>& affordance_boxes) {
+	if (data_path.empty()) {
+		throw std::runtime_error{"Cannot save affordance data to an empty path."};
+	}
+
+	nlohmann::json j = {
+		{"boxes", nlohmann::json::array()}
+	};
+
+	for (const auto& affordance_box : affordance_boxes) {
+		nlohmann::json box_json = {};
+		std::vector<nlohmann::json> transform_rows;
+		for (int i = 0; i < 3; ++i) {
+			nlohmann::json col = nlohmann::json::array();
+			for (int j = 0; j < 4; ++j) {
+				col.push_back(affordance_box.transform[j][i]);
+			}
+			transform_rows.push_back(col);
+		}
+		box_json["transform_matrix"] = transform_rows;
+		box_json["label"] = affordance_box.label;
+		box_json["min"] = affordance_box.bounding_box.min;
+		box_json["max"] = affordance_box.bounding_box.max;
+		j["boxes"].push_back(box_json);
+	}
+
+	std::ofstream f(native_string(data_path));
+	f << j;
+}
+
+void Testbed::load_affordances(const std::string& affordance_path, std::vector<Testbed::Labeling::AffordanceBox>& affordance_boxes) {
+	tlog::info() << "Loading affordances from " << affordance_path;
+	if (fs::path(affordance_path).exists()) {
+		std::ifstream f{affordance_path};
+		nlohmann::json affordances = nlohmann::json::parse(f, nullptr, true, true);
+		if (!affordances.contains("boxes") || !affordances["boxes"].is_array()) {
+			throw std::runtime_error{"Affordances requires a list of boxes"};
+		}
+
+		affordance_boxes.clear();
+
+		for (auto& box : affordances["boxes"]) {
+			Testbed::Labeling::AffordanceBox affordanceBox;
+
+			if (!box.contains("transform_matrix") || !box["transform_matrix"].is_array() || box["transform_matrix"].size() != 3) {
+				tlog::warning() << "Malformed box due to transform_matrix";
+				continue;
+			}
+
+			nlohmann::json& jsonmatrix_start = box["transform_matrix"];
+			for (int i = 0; i < 3; ++i) {
+				for (int j = 0; j < 4; ++j) {
+					affordanceBox.transform[j][i] = float(jsonmatrix_start[i][j]);
+				}
+			}
+
+			if (box.contains("label")) {
+				affordanceBox.label = box["label"];
+			}
+
+			if (!box.contains("min") || !box["min"].is_array() || box["min"].size() != 3) {
+				tlog::warning() << "Malformed box due to min";
+				continue;
+			}
+
+			for (int i = 0; i < 3; ++i) {
+				affordanceBox.bounding_box.min[i] = float(box["min"][i]);
+			}
+
+			if (!box.contains("max") || !box["max"].is_array() || box["max"].size() != 3) {
+				tlog::warning() << "Malformed box due to max";
+				continue;
+			}
+
+			for (int i = 0; i < 3; ++i) {
+				affordanceBox.bounding_box.max[i] = float(box["max"][i]);
+			}
+
+			affordance_boxes.push_back(affordanceBox);
+		}
+	}
+}
+
 void Testbed::add_marker(const fs::path& data_path, bool select, bool center) {
     tlog::info() << "Loading mesh from '" << data_path << "'";
 
-    Testbed::Labeling::Marker marker;
+    Testbed::Labeling::MeshMarker marker;
     if (equals_case_insensitive(data_path.extension(), "obj")) {
         marker.transform = m_labeling.mesh_markers.labeling_origin;
-        marker.mesh = load_obj_complete(data_path);
+
+		bool existing_mesh = false;
+		for (auto& existing_marker : m_labeling.mesh_markers.markers) {
+			if (existing_marker.fs_path.filename() == data_path.filename()) {
+				marker.loaded_mesh = existing_marker.loaded_mesh;
+				existing_mesh = true;
+				break;
+			}
+		}
+
+		if (!existing_mesh) {
+			marker.loaded_mesh = std::make_shared<Testbed::Labeling::LoadedMesh>();
+		}
+
+		load_affordances(data_path.stem().str() + "_affordances.json", marker.loaded_mesh->affordance_boxes);
+
+		marker.loaded_mesh->mesh = load_obj_complete(data_path);
 
 		if (center) {
 			vec3 mean_vertice = vec3::zero();
-			for (auto& vertice : marker.mesh.verts) {
-				mean_vertice += vertice / float(marker.mesh.verts.size());
+			for (auto& vertice : marker.loaded_mesh->mesh.verts) {
+				mean_vertice += vertice / float(marker.loaded_mesh->mesh.verts.size());
 			}
-			for (auto& vertice : marker.mesh.verts) {
+			for (auto& vertice : marker.loaded_mesh->mesh.verts) {
 				vertice -= mean_vertice;
 			}
 		}
@@ -3317,7 +3458,7 @@ void Testbed::add_marker(const fs::path& data_path, bool select, bool center) {
     }
     marker.fs_path = data_path.filename();
 
-	assign_or_add_category(marker, data_path.basename());
+	assign_or_add_category(marker, marker.fs_path.str());
 
 	std::random_device rd;
 	std::mt19937 gen(rd());
@@ -3398,7 +3539,7 @@ void Testbed::load_labels(const fs::path& data_path) {
 	if (labels.contains("markers")) {
 		for (auto&& marker : labels["markers"]) {
 			add_marker(fs::path(m_labeling.meshes_root_dir) / marker["file_path"], false, center_vertices);
-			Testbed::Labeling::Marker& m = m_labeling.mesh_markers.markers.back();
+			Testbed::Labeling::MeshMarker& m = m_labeling.mesh_markers.markers.back();
 			nlohmann::json& jsonmatrix_start = marker["transform_matrix"];
 			for (int i = 0; i < 3; ++i) {
 				for (int j = 0; j < 4; ++j) {
@@ -3434,17 +3575,13 @@ void Testbed::load_labels(const fs::path& data_path) {
 				matrix[j][i] = val;
 			}
 		}
-		// m_camera = mat3(matrix) * m_camera;
-		// m_camera[3] += matrix[3].xyz();
-
-		// m_up_dir = mat3(matrix) * m_up_dir;
 
 		m_labeling.view_navigator.accumulated_world_transform = matrix;
 	}
 }
 
 void Testbed::add_bb_marker(const fs::path& data_path, const mat4x3& transform, const vec3& a, const vec3& b) {
-	Testbed::Labeling::Marker bb_marker;
+	Testbed::Labeling::BoundingBoxMarker bb_marker;
 	bb_marker.transform = transform;
 	bb_marker.fs_path = data_path.str();
 	bb_marker.bounding_box.min = a;

@@ -818,40 +818,70 @@ public:
 				transform[3] = pos;
 				fs_path = _fs_path;
 			}
-
-			struct Affordance {
-				Affordance() {};
-				Affordance(const vec3& min, const vec3& max) {
-					bounding_box.min = min;
-					bounding_box.max = max;
-				}
-				ngp::BoundingBox bounding_box;
-				mat4x3 transform = mat3::identity();
-			};
-			
-			BoundingBox2D bounding_box_2d;
             mat4x3 transform = mat4x3::identity();
 			vec3 instance_color = {1.f, 1.f, 1.f};
 			ngp::BoundingBox bounding_box = ngp::BoundingBox();
-			std::shared_ptr<ngp::Testbed::Labeling::Marker::Affordance> affordance = nullptr;
 			std::vector<vec3> mc_verts;
 			std::vector<vec3> mc_normals;
 			std::vector<vec3> mc_colors;
 			std::vector<uint32_t> mc_indices;
 			int mc_num_vertices = 0;
-            Mesh mesh;
             fs::path fs_path;
             bool selected = false;
 			bool hidden = false;
+
+			mat3 rotation() {
+				return mat3(transform);
+			}
+
+			vec3 translation() {
+				return transform[3];
+			}
+
+			mat4 homogeneous_transform() {
+				mat4 transform = mat4::identity();
+				mat3 r = rotation();
+				vec3 t = translation();
+				transform[0] = r[0];
+				transform[1] = r[1];
+				transform[2] = r[2];
+				transform[3][0] = t[0];
+				transform[3][1] = t[1];
+				transform[3][2] = t[2];
+				return transform;
+			}
+        };
+
+		struct AffordanceBox {
+			AffordanceBox() {};
+			AffordanceBox(const vec3& min, const vec3& max) {
+				bounding_box.min = min;
+				bounding_box.max = max;
+			}
+			ngp::BoundingBox bounding_box;
+			mat4x3 transform = mat3::identity();
+			std::string label;
+			bool selected = false;
+		};
+
+		struct LoadedMesh {
+			std::vector<ngp::Testbed::Labeling::AffordanceBox> affordance_boxes;
+            Mesh mesh;
+			bool affordance_boxes_update_saved = true;
+		};
+
+		struct MeshMarker : Marker {
+			std::shared_ptr<LoadedMesh> loaded_mesh = nullptr;
 			std::shared_ptr<Category> category = nullptr;
+			BoundingBox2D bounding_box_2d;
 
 			void update_bounding_box() {
-				if (mesh.verts.size() == 0)
+				if (loaded_mesh->mesh.verts.size() == 0)
 					return;
 
-				for (int i = 0; i < mesh.verts.size(); ++i)
+				for (int i = 0; i < loaded_mesh->mesh.verts.size(); ++i)
 				{
-					const auto& vert = mesh.verts[i];
+					const auto& vert = loaded_mesh->mesh.verts[i];
 					if (i == 0) {
 						bounding_box.min = vert;
 						bounding_box.max = vert;
@@ -877,7 +907,11 @@ public:
 					}
 				}
 			}
-        };
+		};
+
+		struct BoundingBoxMarker : Marker {
+
+		};
 
 		struct ViewNavigator {
 			float camera_distance = 1.0f;
@@ -885,7 +919,6 @@ public:
 		} view_navigator;
 
 		struct Markers {
-			std::vector<Marker> markers;
 #ifdef NGP_GUI
 			ImGuizmo::OPERATION guizmo_op = ImGuizmo::TRANSLATE;
 #endif
@@ -895,6 +928,7 @@ public:
 		};
 
 		struct MeshMarkers : Markers {
+			std::vector<MeshMarker> markers;
 			struct MarchingCubes {
 				EMeshRenderMode render_mode = EMeshRenderMode::VertexNormals;
 				bool render_bounding_boxes = false;
@@ -904,6 +938,7 @@ public:
 				float thresh = 2.5f;
 				int res = 256;
 			} marching_cubes;
+
 			ECustomMeshRenderMode render_mode = ECustomMeshRenderMode::Normals;
 			bool render_bounding_boxes = false;
 			bool render_3d_bounding_boxes = false;
@@ -941,6 +976,7 @@ public:
 		} mesh_markers;
 
 		struct BoundingBoxMarkers : Markers {
+			std::vector<BoundingBoxMarker> markers;
 			struct MarchingCubes {
 				EMeshRenderMode render_mode = EMeshRenderMode::VertexNormals;
 				float thresh = 2.5f;
@@ -1406,7 +1442,7 @@ public:
 
 	std::shared_ptr<NerfNetwork<network_precision_t>> m_nerf_network;
 
-	Testbed::BoundingBox2D calculate_marker_bounding_box(const Testbed::Labeling::Marker& marker, const ivec2& res, const vec2& center, const vec2& focal_length, const mat4& world2view, cudaStream_t stream);
+	Testbed::BoundingBox2D calculate_marker_bounding_box(const Testbed::Labeling::MeshMarker& marker, const ivec2& res, const vec2& center, const vec2& focal_length, const mat4& world2view, cudaStream_t stream);
 	std::vector<Testbed::BoundingBox2D> calculate_marker_bounding_boxes(int display_w, int display_h, cudaStream_t stream);
 #ifdef NGP_GUI
 	void render_3d_bounding_box(ImDrawList* list, const mat4& world2proj, const mat4x3& world2model, const ImColor& color, const vec3& min, const vec3& max, float thickness);
@@ -1423,10 +1459,13 @@ public:
 	void save_labels(const fs::path& data_path);
 	void load_labels(const fs::path& data_path);
 	void optimise_markers(uint32_t n_steps, float scale, float thresh, int res);
+	void save_affordances(const fs::path& data_path, const std::vector<Testbed::Labeling::AffordanceBox>& affordance_boxes);
+	void load_affordances(const std::string& affordance_path, std::vector<Testbed::Labeling::AffordanceBox>& affordance_boxes);
 	void add_marker(const fs::path& data_path, bool select, bool center);
 	void marker_marching_cubes();
 	void reload_meshes();
-	void assign_or_add_category(Testbed::Labeling::Marker& marker, const std::string& cat_name);
+	void bounding_box_to_mesh_marker(const Testbed::Labeling::BoundingBoxMarker& bb_marker);
+	void assign_or_add_category(Testbed::Labeling::MeshMarker& marker, const std::string& cat_name);
 };
 
 }
