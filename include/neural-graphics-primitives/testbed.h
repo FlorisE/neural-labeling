@@ -1466,6 +1466,8 @@ public:
 	void reload_meshes();
 	void bounding_box_to_mesh_marker(const Testbed::Labeling::BoundingBoxMarker& bb_marker);
 	void assign_or_add_category(Testbed::Labeling::MeshMarker& marker, const std::string& cat_name);
+
+	bool m_network_needs_reset = false;
 };
 
 }

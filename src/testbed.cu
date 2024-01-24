@@ -1521,6 +1521,10 @@ void Testbed::imgui() {
 		ImGui::SameLine();
 		ImGui::Checkbox("rand levels", &m_max_level_rand_training);
 		if (m_testbed_mode == ETestbedMode::Nerf) {
+			bool previous_optimize_extrinsics_state = m_nerf.training.optimize_extrinsics;
+			bool previous_optimize_distortion_state = m_nerf.training.optimize_distortion;
+			bool previous_optimize_extra_dims_state = m_nerf.training.optimize_extra_dims;
+
 			ImGui::Checkbox("envmap", &m_nerf.training.train_envmap);
 			ImGui::SameLine();
 			ImGui::Checkbox("extrinsics", &m_nerf.training.optimize_extrinsics);
@@ -1528,6 +1532,12 @@ void Testbed::imgui() {
 			ImGui::Checkbox("distortion", &m_nerf.training.optimize_distortion);
 			ImGui::SameLine();
 			ImGui::Checkbox("per-image latents", &m_nerf.training.optimize_extra_dims);
+
+			if (previous_optimize_extrinsics_state != m_nerf.training.optimize_extrinsics || 
+			    previous_optimize_distortion_state != m_nerf.training.optimize_distortion ||
+				previous_optimize_extra_dims_state != m_nerf.training.optimize_extra_dims) {
+				//m_network_needs_reset = true;
+			}
 
 
 			static bool export_extrinsics_in_quat_format = true;
@@ -5370,9 +5380,14 @@ void Testbed::train(uint32_t batch_size) {
 		if (m_nerf.training.optimize_extra_dims) {
 			if (m_nerf.training.dataset.n_extra_learnable_dims == 0) {
 				m_nerf.training.dataset.n_extra_learnable_dims = 16;
-				reset_network();
+				m_network_needs_reset = true;
 			}
 		}
+	}
+
+	if (m_network_needs_reset) {
+		reset_network();
+		m_network_needs_reset = false;
 	}
 
 	if (!m_dlss) {
